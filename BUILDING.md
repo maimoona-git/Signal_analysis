@@ -72,6 +72,11 @@ ctest --test-dir build-wasm --output-on-failure   # runs the tests under node
 scripts/serve.sh                                  # http://localhost:8080/
 ```
 
+The WASM build also produces `build-wasm/bridge/sigbridge.js` + `.wasm` (the
+Embind bridge, see `bridge/README.md`). `ctest` runs its JS test suite with
+`node --test` (any node >= 20; `File`/`Blob` are used as fake browser inputs), so
+`node` must be on `PATH`; without it that one test is skipped with a warning.
+
 C++ exceptions are enabled for the whole WASM build (`-fexceptions`), because
 `sigcore` reports errors by throwing and Emscripten otherwise compiles `throw`
 into an uncatchable abort.

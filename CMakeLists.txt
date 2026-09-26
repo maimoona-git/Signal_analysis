@@ -25,7 +25,12 @@ endif()
 option(SIG_BUILD_TESTS "Build the C++ test suite" ON)
 option(SIG_BUILD_APP "Build the Qt Widgets GUI (needs Qt6 Widgets)" ON)
 
+if(SIG_BUILD_TESTS)
+  enable_testing()
+endif()
+
 add_subdirectory(core)
+add_subdirectory(bridge)
 
 if(SIG_BUILD_APP)
   find_package(Qt6 QUIET COMPONENTS Widgets)
@@ -37,6 +42,5 @@ if(SIG_BUILD_APP)
 endif()
 
 if(SIG_BUILD_TESTS)
-  enable_testing()
   add_subdirectory(tests)
 endif()

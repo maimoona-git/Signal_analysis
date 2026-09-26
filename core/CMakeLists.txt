@@ -7,6 +7,7 @@
 # Sources with no third-party dependency: compile identically on both targets.
 set(SIGCORE_PORTABLE_SOURCES
   src/wav_io.cpp
+  src/ingest.cpp
   src/iq_io.cpp
   src/interleave.cpp
   src/gf256.cpp

@@ -90,7 +90,8 @@ Full details in `BUILDING.md`.
   `-DPython3_EXECUTABLE=<python with pybind11>` for the pybind module)
 - Local serve: `scripts/serve.sh [port]` (plain static server on `dist/`)
 - Run tests: `ctest --test-dir build` (native) or
-  `ctest --test-dir build-wasm` (WASM, runs under node; needs emsdk env)
+  `ctest --test-dir build-wasm` (WASM, runs under node; needs emsdk env; also
+  runs the JS bridge suite)
 - Tests use the dependency-free harness in `tests/harness.hpp`; register new
   ones with `sig_add_test` in `tests/CMakeLists.txt`.
 
@@ -109,3 +110,10 @@ native output so any native/WASM divergence fails the WASM run.
 Known core limitation (inherited, deliberately not fixed): the LDPC
 bit-flipping decoder cannot correct a single-bit error at codeword positions
 7, 9, 13, 15 of a block (see the comment in `tests/core/test_fec.cpp`).
+Phase 4 done: Embind bridge in `/bridge` (contract in `bridge/README.md`).
+Bytes in: `ingestFile` -> new in-memory `parse_wav`/`parse_iq`/`ingest_bytes` in
+`/core` (path loaders now wrap them; native pybind API unchanged). ML out:
+continuation-passing `classify_async` (no Asyncify: it would instrument the
+whole Qt app), validated result, JS errors surfaced as `Error`. Tested by C++
+tests (`test_ingest`, `test_ml_result`) and a node JS suite
+(`tests/bridge/bridge.test.mjs`).
