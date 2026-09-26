@@ -246,4 +246,66 @@ TEST_CASE("load_wav / load_iq still work from a path and name it in errors") {
     CHECK(msg.find("/no/such/file.iq") != std::string::npos);
 }
 
+// The native app's own fixture captures (tests/data/fixtures, from its data/fixtures): real
+// files written by other tools, loaded from disk the way the native tests do.
+#ifndef SIG_TEST_DATA_DIR
+#error "SIG_TEST_DATA_DIR must point at tests/data"
+#endif
+namespace {
+std::string fixture(const char* name) { return std::string(SIG_TEST_DATA_DIR) + "/fixtures/" + name; }
+Bytes file_bytes(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    return Bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
+}  // namespace
+
+TEST_CASE("fixture: mono WAV loads as a real signal of 400 samples at 8 kHz") {
+    const auto sig = load_wav(fixture("tone_mono_8k.wav"));
+    CHECK_NEAR(sig.sample_rate, 8000.0, 0.0);
+    CHECK(sig.format == "wav_mono_real");
+    CHECK(sig.num_samples() == 400);
+    CHECK_NEAR(sig.duration_sec(), 0.05, 1e-3 * 0.05);
+    for (const auto& v : sig.samples) CHECK(v.imag() == 0.0f);
+}
+
+TEST_CASE("fixture: stereo WAV loads as I/Q, with a non-zero imaginary part") {
+    const auto sig = load_wav(fixture("tone_stereo_iq_8k.wav"));
+    CHECK_NEAR(sig.sample_rate, 8000.0, 0.0);
+    CHECK(sig.format == "wav_stereo_iq");
+    CHECK(sig.num_samples() == 400);
+    bool any_imag = false;
+    for (const auto& v : sig.samples) any_imag |= (v.imag() != 0.0f);
+    CHECK(any_imag);
+}
+
+TEST_CASE("fixture: raw .IQ loads with the caller's sample rate, which must be positive") {
+    const auto sig = load_iq(fixture("tone_cf32_8k.iq"), 8000.0);
+    CHECK_NEAR(sig.sample_rate, 8000.0, 0.0);
+    CHECK(sig.format == "iq_cf32");
+    CHECK(sig.num_samples() == 400);
+    CHECK_THROWS(load_iq(fixture("tone_cf32_8k.iq"), 0.0));
+    CHECK_THROWS(load_iq(fixture("tone_cf32_8k.iq"), -1.0));
+}
+
+TEST_CASE("fixture: a missing file is an error that names the file") {
+    std::string msg;
+    try { load_wav(fixture("does_not_exist.wav")); } catch (const std::exception& e) { msg = e.what(); }
+    CHECK(msg.find("does_not_exist.wav") != std::string::npos);
+    CHECK_THROWS(load_iq(fixture("does_not_exist.iq"), 8000.0));
+}
+
+TEST_CASE("fixture: loading from disk and parsing the same bytes in memory agree exactly") {
+    for (const char* name : {"tone_mono_8k.wav", "tone_stereo_iq_8k.wav"}) {
+        const auto from_disk = load_wav(fixture(name));
+        const auto bytes = file_bytes(fixture(name));
+        const auto from_memory = parse_wav(bytes.data(), bytes.size(), name);
+        CHECK(from_disk.samples == from_memory.samples);
+        CHECK(from_disk.sample_rate == from_memory.sample_rate && from_disk.format == from_memory.format);
+        const auto via_ingest = ingest_bytes(bytes.data(), bytes.size(), name, 0.0);   // the browser's entry point
+        CHECK(via_ingest.samples == from_disk.samples);
+    }
+    const auto iq_bytes = file_bytes(fixture("tone_cf32_8k.iq"));
+    CHECK(load_iq(fixture("tone_cf32_8k.iq"), 8000.0).samples == parse_iq(iq_bytes.data(), iq_bytes.size(), 8000.0).samples);
+}
+
 TEST_MAIN()

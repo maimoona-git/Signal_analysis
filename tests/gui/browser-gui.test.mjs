@@ -7,7 +7,8 @@
 // settings (tests/data/pipeline/pipeline.rec), and the waterfall's pixels are checked
 // against the viridis table.
 //
-//   npm install && scripts/build-wasm.sh && scripts/stage-web.sh && node --test tests/gui/browser-gui.test.mjs
+//   npm install && scripts/build-wasm.sh && node --test tests/gui/browser-gui.test.mjs
+//   (SIG_DIST=<dir> tests another copy of the site; SIG_ORIGIN=<url> tests a server you started)
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -48,10 +49,13 @@ const VIRIDIS = new Set(
 // --- a plain static file server (no special headers) --------------------------------
 
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.onnx': 'application/octet-stream' };
-function serve(dir) {
+function serve(dir, base = '/') {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
-      const file = path.join(dir, decodeURIComponent(new URL(req.url, 'http://x').pathname));
+      let pathname = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+      if (!pathname.startsWith(base)) { res.writeHead(404); return res.end('outside the base path'); }
+      pathname = '/' + pathname.slice(base.length);
+      const file = path.join(dir, pathname);
       if (!file.startsWith(dir) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
         const index = path.join(file, 'index.html');
         if (file.startsWith(dir) && fs.existsSync(index)) { res.writeHead(200, { 'content-type': 'text/html' }); return res.end(fs.readFileSync(index)); }
@@ -69,6 +73,7 @@ function serve(dir) {
 describe('the Qt-WASM app in real Chrome', () => {
   let server, browser, page, origin;
   const consoleErrors = [];
+  const externalRequests = [];
 
   const state = () => page.evaluate(() => JSON.parse(JSON.stringify(window.sigApp.sigAppState())));
   const waitFor = async (what, predicate, timeout = 90000) => {
@@ -94,11 +99,16 @@ describe('the Qt-WASM app in real Chrome', () => {
   before(async () => {
     assert.ok(CHROME, 'Chrome not found (set CHROME=...)');
     assert.ok(fs.existsSync(path.join(dist, 'vendor/ort/ort.wasm.min.mjs')), `${dist} is not staged: run scripts/build-wasm.sh && scripts/stage-web.sh`);
-    server = await serve(dist);
-    origin = `http://127.0.0.1:${server.address().port}/`;
+    if (process.env.SIG_ORIGIN) {                 // test a server someone else started (scripts/verify-dist.sh uses a stock python one)
+      origin = process.env.SIG_ORIGIN.replace(/\/?$/, '/');
+    } else {
+      server = await serve(dist);
+      origin = `http://127.0.0.1:${server.address().port}/`;
+    }
     browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-gpu'], defaultViewport: { width: 1200, height: 800 } });
     page = await browser.newPage();
     page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) consoleErrors.push(m.text()); });
+    page.on('request', (r) => { if (!r.url().startsWith(origin) && !r.url().startsWith('data:') && !r.url().startsWith('blob:')) externalRequests.push(r.url()); });
     page.on('response', (r) => { if (r.status() >= 400 && !/favicon\.ico$/.test(r.url())) consoleErrors.push(`${r.status()} ${r.url()}`); });   // a missing asset, but not the browser's favicon probe
     page.on('pageerror', (e) => consoleErrors.push(String(e)));
     await page.goto(origin);
@@ -244,7 +254,138 @@ describe('the Qt-WASM app in real Chrome', () => {
     await shot('6-large');
   });
 
+  it('a WAV file loads through the real file chooser too (the native GUI test used a WAV fixture)', async () => {
+    let s = await state();
+    const [chooser] = await Promise.all([page.waitForFileChooser({ timeout: 10000 }), click(s.controls.open)]);
+    await chooser.accept([path.join(root, 'tests/data/fixtures/tone_stereo_iq_8k.wav')]);
+    s = await waitFor('the WAV to load', (x) => x.filename === 'tone_stereo_iq_8k.wav');
+    await click(s.controls.run);
+    s = await waitFor('the WAV analysis', (x) => x.status.startsWith('Done.') || x.status === 'Analysis failed.');
+    assert.ok(s.status.startsWith('Done.'), s.status);
+    assert.match(s.resultText, /Format:               wav_stereo_iq/);
+    assert.match(s.resultText, /Sample rate:          8000 Hz/);           // from the WAV header; the field's own value is ignored
+    assert.match(s.resultText, /Num samples:          400/);
+    assert.match(s.resultText, /Predicted modulation: \w+ \(confidence \d\.\d\d\)/);
+    assert.match(s.resultText, /Frame period:/);
+    assert.equal(s.waterfall.hasData, true);
+    assert.equal(s.constellation.points, 400);
+  });
+
+  it('an empty capture is reported as an error, and the app stays usable', async () => {
+    await page.evaluate(() => window.sigApp.sigAppOpenFile(new Uint8Array(0), 'empty.iq'));
+    let s = await waitFor('the empty file', (x) => x.filename === 'empty.iq');
+    await click(s.controls.run);
+    s = await waitFor('the failure', (x) => x.status === 'Analysis failed.');
+    assert.match(s.resultText, /^Error: .+/);
+    assert.equal(s.dialogOpen, true);
+    await page.keyboard.press('Enter');
+    s = await waitFor('the dialog to close', (x) => !x.dialogOpen, 10000);
+    assert.equal(s.canRun, true);
+  });
+
+  it('the sample-rate field only accepts numbers (typed letters are ignored)', async () => {
+    let s = await state();
+    await click(s.controls.sampleRate);
+    await page.keyboard.press('End');
+    for (let i = 0; i < 12; i++) await page.keyboard.press('Backspace');    // clear whatever is there
+    await page.keyboard.type('1a2b5');
+    s = await state();
+    assert.equal(s.sampleRateText, '125');
+    await page.keyboard.type('-');
+    s = await state();
+    assert.equal(s.sampleRateText, '125');                                   // a minus sign is refused (range 0..1e12)
+    for (let i = 0; i < 6; i++) await page.keyboard.press('Backspace');
+    assert.equal((await state()).sampleRateText, '');
+  });
+
+  it('a 64 MB capture (8,000,000 samples) analyses in seconds, not minutes', async () => {
+    // Regression: the decoded message of an 8-million-bit stream is a 2 MB line, and Qt's layout of one
+    // line that long took 220 s. The panel now shows the first 10,000 characters.
+    const t0 = Date.now();
+    await page.evaluate(() => {
+      const n = 8_000_000, f = new Float32Array(2 * n);
+      let seed = 1;
+      for (let i = 0; i < f.length; i++) { seed = (seed * 1664525 + 1013904223) >>> 0; f[i] = (seed / 4294967296) * 2 - 1; }
+      window.sigApp.sigAppOpenFile(new Uint8Array(f.buffer), 'sixty-four-mb.iq');
+    });
+    let s = await waitFor('the file', (x) => x.filename === 'sixty-four-mb.iq');
+    await click(s.controls.run);
+    s = await waitFor('the analysis', (x) => x.status.startsWith('Done.') || x.status === 'Analysis failed.', 120000);
+    const ms = Date.now() - t0;
+    console.log(`         64 MB capture: ${ms} ms from load to Done`);
+    assert.ok(s.status.startsWith('Done.'), s.status);
+    assert.match(s.resultText, /Num samples:          8000000/);
+    assert.ok(s.resultText.length < 20000, `the panel text is bounded (${s.resultText.length} characters)`);
+    assert.match(s.resultText, /characters in all, the first 10000 shown|Decoded message:/);
+    assert.ok(ms < 30000, `took ${ms} ms`);
+  });
+
+  it('makes no requests outside its own origin (it works offline / air-gapped)', async () => {
+    assert.deepEqual(externalRequests, []);
+  });
+
   it('logged no errors', async () => {
     assert.deepEqual(consoleErrors, []);
+  });
+});
+
+describe('served from a sub-path, as a GitHub Pages project site or any reverse proxy would', () => {
+  let server, browser, page;
+  const failures = [];
+  before(async () => {
+    server = await serve(dist, '/apps/sig/');
+    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-gpu'], defaultViewport: { width: 1200, height: 800 } });
+    page = await browser.newPage();
+    page.on('response', (r) => { if (r.status() >= 400 && !/favicon\.ico$/.test(r.url())) failures.push(`${r.status()} ${r.url()}`); });
+    await page.goto(`http://127.0.0.1:${server.address().port}/apps/sig/`);
+    await page.waitForFunction(() => window.sigApp && window.sigApp.sigAppState().window, { timeout: 90000 });
+  });
+  after(async () => { await browser?.close(); server?.close(); });
+
+  it('every asset (Qt runtime, ORT runtime, model) resolves relative to the page, and an analysis works', async () => {
+    const bytes = fs.readFileSync(path.join(dataDir, 'fsk_plain.iq')).toString('base64');
+    await page.evaluate((b64) => window.sigApp.sigAppOpenFile(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)), 'fsk_plain.iq'), bytes);
+    let s = await page.evaluate(() => JSON.parse(JSON.stringify(window.sigApp.sigAppState())));
+    await page.mouse.click(s.controls.sampleRate.x, s.controls.sampleRate.y);
+    await page.keyboard.type('8000');
+    s = await page.evaluate(() => JSON.parse(JSON.stringify(window.sigApp.sigAppState())));
+    await page.mouse.click(s.controls.run.x, s.controls.run.y);
+    for (let i = 0; i < 600; i++) {
+      s = await page.evaluate(() => JSON.parse(JSON.stringify(window.sigApp.sigAppState())));
+      if (s.status.startsWith('Done.') || s.status === 'Analysis failed.') break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.ok(s.status.startsWith('Done.'), s.status);
+    assert.match(s.resultText, /Decoded message:      'SIH2026!'/);
+    assert.deepEqual(failures, []);                                          // nothing 404'd
+  });
+});
+
+// Opt-in (needs a machine with several GB free): SIG_TEST_HUGE=1
+describe('a capture too large to hold', { skip: process.env.SIG_TEST_HUGE ? false : 'set SIG_TEST_HUGE=1 to run (allocates ~1 GB in the page)' }, () => {
+  let server, browser, page;
+  before(async () => {
+    server = await serve(dist);
+    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-gpu'], defaultViewport: { width: 1200, height: 800 }, protocolTimeout: 600000 });
+    page = await browser.newPage();
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await page.waitForFunction(() => window.sigApp && window.sigApp.sigAppState().window, { timeout: 90000 });
+  });
+  after(async () => { await browser?.close(); server?.close(); });
+
+  it('fails with a clear out-of-memory message instead of crashing, and the app keeps working', async () => {
+    const state = () => page.evaluate(() => JSON.parse(JSON.stringify(window.sigApp.sigAppState())));
+    await page.evaluate(() => window.sigApp.sigAppOpenFile(new Uint8Array(1024 * 1024 * 1024), 'one-gigabyte.iq'));
+    let s = await state();
+    await page.mouse.click(s.controls.run.x, s.controls.run.y);
+    for (let i = 0; i < 1200 && s.status !== 'Analysis failed.'; i++) { await new Promise((r) => setTimeout(r, 100)); s = await state(); }
+    assert.equal(s.status, 'Analysis failed.');
+    assert.match(s.resultText, /out of memory: this capture is too large/);
+    await page.keyboard.press('Enter');
+    await page.evaluate(() => window.sigApp.sigAppOpenFile(new Float32Array(2000).buffer, 'small.iq'));
+    s = await state();
+    await page.mouse.click(s.controls.run.x, s.controls.run.y);
+    for (let i = 0; i < 300 && !s.status.startsWith('Done.'); i++) { await new Promise((r) => setTimeout(r, 100)); s = await state(); }
+    assert.ok(s.status.startsWith('Done.'), s.status);
   });
 });

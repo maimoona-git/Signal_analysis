@@ -3,6 +3,7 @@
 #include <memory>
 #include <stdexcept>
 
+#include "error_text.hpp"
 #include "ml_bridge.hpp"
 
 namespace sigbridge {
@@ -17,17 +18,18 @@ void run_pipeline_async(const uint8_t* data, size_t size, const std::string& fil
         sigcore::SignalData{prep->signal.samples, prep->signal.sample_rate, prep->signal.format},
         [prep, options, done = std::move(done)](bool ok, const MlResult& ml, const std::string& error) {
             if (!ok) {
-                done(false, sigapp::PipelineResult{}, error);
+                done(false, nullptr, error);
                 return;
             }
-            sigapp::PipelineResult result;
+            std::shared_ptr<const sigapp::PipelineResult> result;
             try {
-                result = sigapp::pipeline_finish(std::move(*prep), sigapp::Classification{ml.label, ml.confidence}, options);
+                result = std::make_shared<const sigapp::PipelineResult>(
+                    sigapp::pipeline_finish(std::move(*prep), sigapp::Classification{ml.label, ml.confidence}, options));
             } catch (const std::exception& e) {
-                done(false, sigapp::PipelineResult{}, e.what());
+                done(false, nullptr, describe_exception(e));
                 return;
             }
-            done(true, result, "");
+            done(true, std::move(result), "");
         });
 }
 

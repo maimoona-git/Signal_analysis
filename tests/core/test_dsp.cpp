@@ -169,6 +169,41 @@ TEST_CASE("lowpass filter passes an in-band tone and rejects an out-of-band one"
     CHECK(stop < pass * 1e-3);  // > 60 dB down out of band
 }
 
+// The native app's own DSP tests (tests/core/test_dsp.py), same signals and thresholds.
+TEST_CASE("native: fft of a 1 kHz tone at 8 kHz peaks at the expected bin") {
+    const unsigned n = 1024;
+    const auto spectrum = fft_forward(tone(n, 1000.0 * n / 8000.0));
+    CHECK(spectrum.size() == n);
+    CHECK(argmax_mag(spectrum) == static_cast<size_t>(std::lround(1000.0 * n / 8000.0)));
+}
+
+TEST_CASE("native: the spectrogram has the expected shape and its peak bin is stable across every frame") {
+    const unsigned nfft = 256, hop = 64;
+    const auto x = tone(4096, 4096 * 1000.0 / 8000.0);
+    unsigned frames = 0;
+    const auto spec = compute_spectrogram(x, nfft, hop, &frames);
+    CHECK(frames == (x.size() - nfft) / hop + 1);
+    CHECK(spec.size() == static_cast<size_t>(frames) * nfft);
+    const size_t expected_bin = nfft / 2 + static_cast<size_t>(std::lround(1000.0 / (8000.0 / nfft)));   // fft-shifted
+    for (unsigned f = 0; f < frames; ++f) {
+        const std::vector<float> row(spec.begin() + static_cast<long>(f) * nfft, spec.begin() + static_cast<long>(f + 1) * nfft);
+        CHECK(argmax(row) == expected_bin);
+    }
+}
+
+TEST_CASE("native: the low-pass filter attenuates a near-Nyquist tone and passes an in-band one") {
+    auto steady_power = [](const std::vector<cf>& v) {       // second half, once the filter has filled
+        double p = 0;
+        for (size_t i = v.size() / 2; i < v.size(); ++i) p += std::norm(v[i]);
+        return p / static_cast<double>(v.size() - v.size() / 2);
+    };
+    const auto high = tone(4096, 4096 * 3500.0 / 8000.0), low = tone(4096, 4096 * 200.0 / 8000.0);
+    const auto y_high = lowpass_filter(high, 128, 0.1f, 60.0f), y_low = lowpass_filter(low, 128, 0.1f, 60.0f);
+    CHECK(y_high.size() == 4096 && y_low.size() == 4096);
+    CHECK(steady_power(y_high) < steady_power(high) * 0.1);
+    CHECK(steady_power(y_low) > steady_power(low) * 0.5);
+}
+
 TEST_CASE("empty and undersized inputs are rejected") {
     bool threw = false;
     try { fft_forward({}); } catch (const std::exception&) { threw = true; }

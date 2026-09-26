@@ -229,6 +229,24 @@ describe('bridge: C++ -> JS ML call-out -> C++', () => {
     assert.deepEqual(order, ['async']);
   });
 
+  it('reads a subarray view of a larger Float32Array correctly (the Embind analogue of the native strided-array bug)', async () => {
+    // The native app once read non-contiguous numpy views as if contiguous. The same trap here is a
+    // typed-array *view* onto a bigger buffer: it must be read at its own offset and length.
+    const backing = new Float32Array(64).fill(-7);
+    backing.set([1, 2, 3, 4, 5, 6], 10);
+    const view = backing.subarray(10, 16);
+    assert.equal(view.byteOffset, 40);
+    let seen;
+    bridge.setClassifier((input, rows, cols) => { seen = [...input]; return { classes: ['a'], probabilities: [1] }; });
+    await bridge.classify(view, 2, 3);
+    assert.deepEqual(seen, [1, 2, 3, 4, 5, 6]);            // not the -7 padding around it
+    // and a view whose backing buffer is shared with another view
+    const other = new Float32Array(backing.buffer, 4 * 20, 4);
+    other.set([9, 8, 7, 6]);
+    await bridge.classify(other, 2, 2);
+    assert.deepEqual(seen, [9, 8, 7, 6]);
+  });
+
   it('validates the call arguments', async () => {
     bridge.setClassifier(() => ({ classes: ['a'], probabilities: [1] }));
     await assert.rejects(bridge.classify(new Float32Array(5), 2, 2), (e) =>

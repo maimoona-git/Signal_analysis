@@ -13,6 +13,7 @@
 #include <QStatusBar>
 #include <QToolBar>
 
+#include "error_text.hpp"
 #include "js_util.hpp"
 #include "wasm_bindings.hpp"
 
@@ -51,7 +52,7 @@ void open_file(val bytes, std::string filename) {
                            QByteArray(reinterpret_cast<const char*>(data.data()), static_cast<qsizetype>(data.size())));
         return;
     } catch (const std::exception& e) {
-        error = e.what();
+        error = sigbridge::describe_exception(e);
     }
     sigbridge::throw_js_error(error);
 }

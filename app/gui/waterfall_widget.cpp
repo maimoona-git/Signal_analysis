@@ -37,14 +37,23 @@ void WaterfallWidget::setData(const sigapp::Spectrogram& s) {
     levelMax_ = *hi_it;
     const double span = levelMax_ - levelMin_;
 
-    // The data is (frames, nfft) row-major; the picture has time along x and
-    // frequency up y, so bin f of frame t lands at pixel (t, nfft - 1 - f).
-    image_ = QImage(static_cast<int>(s.frames), static_cast<int>(s.nfft), QImage::Format_RGB32);
-    for (unsigned t = 0; t < s.frames; ++t) {
+    // The data is (frames, nfft) row-major; the picture has time along x and frequency up y,
+    // so bin f of column c lands at pixel (c, nfft - 1 - f). A long capture is folded into
+    // kMaxColumns columns, each the per-bin maximum over its group of frames.
+    const unsigned columns = std::min(s.frames, kMaxColumns);
+    image_ = QImage(static_cast<int>(columns), static_cast<int>(s.nfft), QImage::Format_RGB32);
+    std::vector<float> column(s.nfft);
+    for (unsigned c = 0; c < columns; ++c) {
+        const size_t first = static_cast<size_t>(c) * s.frames / columns;
+        const size_t last = static_cast<size_t>(c + 1) * s.frames / columns;   // exclusive; every group is non-empty
+        std::copy_n(s.data.begin() + static_cast<long>(first * s.nfft), s.nfft, column.begin());
+        for (size_t t = first + 1; t < last; ++t) {
+            const float* row = &s.data[t * s.nfft];
+            for (unsigned f = 0; f < s.nfft; ++f) column[f] = std::max(column[f], row[f]);
+        }
         for (unsigned f = 0; f < s.nfft; ++f) {
-            const double v = s.data[static_cast<size_t>(t) * s.nfft + f];
-            const int index = span > 0.0 ? static_cast<int>((v - levelMin_) * 256.0 / span) : 0;  // pyqtgraph's LUT scaling
-            image_.setPixel(static_cast<int>(t), static_cast<int>(s.nfft - 1 - f), viridis(index));
+            const int index = span > 0.0 ? static_cast<int>((column[f] - levelMin_) * 256.0 / span) : 0;  // pyqtgraph's LUT scaling
+            image_.setPixel(static_cast<int>(c), static_cast<int>(s.nfft - 1 - f), viridis(index));
         }
     }
 

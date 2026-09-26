@@ -6,5 +6,5 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-"$REPO_DIR/scripts/stage-web.sh" >/dev/null
+"$REPO_DIR/scripts/stage-web.sh" >/dev/null   # re-stage (no rebuild), in case web/ or the model changed
 exec node --test "$REPO_DIR/tests/gui/browser-gui.test.mjs"

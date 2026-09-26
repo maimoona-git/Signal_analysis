@@ -113,6 +113,30 @@ std::vector<std::complex<float>> noise(size_t n, unsigned seed) {
 
 }  // namespace
 
+// The native app's own preprocessing tests (tests/ml/test_preprocessing.py).
+TEST_CASE("native: the image has the same fixed shape whatever the signal length, and a tone is normalised") {
+    for (unsigned n : {300u, 1000u, 5000u}) {
+        std::vector<std::complex<float>> x(n);
+        for (unsigned i = 0; i < n; ++i) {
+            const double ph = 2.0 * 3.14159265358979323846 * 1000.0 * i / 8000.0;
+            x[i] = {static_cast<float>(std::cos(ph)), static_cast<float>(std::sin(ph))};
+        }
+        CHECK(make_spectrogram_image(x).size() == kMlNfft * kMlFrames);
+    }
+    std::vector<std::complex<float>> loud(2000);
+    for (unsigned i = 0; i < loud.size(); ++i) {
+        const double ph = 2.0 * 3.14159265358979323846 * 1000.0 * i / 8000.0;
+        loud[i] = {static_cast<float>(5.0 * std::cos(ph)), static_cast<float>(5.0 * std::sin(ph))};
+    }
+    const auto image = make_spectrogram_image(loud);
+    double mean = 0, var = 0;
+    for (float v : image) mean += v;
+    mean /= static_cast<double>(image.size());
+    for (float v : image) var += (v - mean) * (v - mean);
+    CHECK_NEAR(mean, 0.0, 1e-3);
+    CHECK_NEAR(std::sqrt(var / static_cast<double>(image.size())), 1.0, 1e-3);
+}
+
 TEST_CASE("captures shorter than one FFT window are rejected") {
     CHECK_THROWS(make_spectrogram_image({}));
     CHECK_THROWS(make_spectrogram_image(noise(kMlNfft - 1, 1)));

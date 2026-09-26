@@ -85,7 +85,8 @@ Resolves to (all arrays are copies, safe to keep):
   detectedFec: string|null, detectionScore: number|null }
 ```
 
-Rejects with an `Error` (never throws synchronously through the wrapper) for a bad
+Rejects with an `Error` (never throws synchronously through the wrapper; an out-of-memory failure reads
+"out of memory: this capture is too large...", not `std::bad_alloc`) for a bad
 file or option, a capture shorter than the ML model's 64-sample FFT window, a
 classifier failure, or any pipeline-stage error. The file format follows the
 native app's rule: `.wav` / `.iq` by extension.

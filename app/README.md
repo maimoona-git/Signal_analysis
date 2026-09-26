@@ -46,8 +46,16 @@ onnxruntime-web through the bridge), `wasm_file_picker` (the `<input type="file"
 
 ## Performance
 
-In headless Chrome (single-threaded WASM): a 512-sample capture analyses in ~70 ms,
-including the ML inference; a 500,000-sample (4 MB) capture takes under 0.2 s from load
-to the finished display. The pipeline runs on the UI thread; at these sizes that does not
-block noticeably. If much larger captures matter, the plan from `CLAUDE.md` applies (a
-Web Worker running a second WASM instance), not in-module threads.
+In headless Chrome (single-threaded WASM), from load to the finished display: a 512-sample capture
+~70 ms including the ML inference; 500,000 samples ~0.2 s; a 64 MB capture (8M samples) ~0.2 to 1.4 s;
+512 MB (64M samples) ~2 s; 768 MB does not fit in memory and is reported as "out of memory" without
+crashing. The pipeline runs on the UI thread; at these sizes that does not block noticeably. If much
+larger captures matter, the plan from `CLAUDE.md` applies (a Web Worker running a second WASM
+instance), not in-module threads.
+
+Two things made large captures usable, both found by measuring (not assumed): the results panel
+shows at most 10,000 characters of the decoded message (Qt's layout of a 2 MB line took 220 s), and
+the waterfall picture is folded to at most 4096 columns by peak-hold (one column per frame was a
+125,000-column image, rescaled on every repaint). Out-of-memory is reported in plain words
+(`sigbridge::describe_exception`), and the full result is shared, not copied, between the pipeline
+and the window.

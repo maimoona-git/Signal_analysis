@@ -14,6 +14,10 @@ class ResultsPanel : public QPlainTextEdit {
 public:
     explicit ResultsPanel(QWidget* parent = nullptr);
 
+    // The decoded message is shown up to kMaxMessageChars characters: Qt lays out a
+    // wrapped line of millions of characters in minutes (measured: 2 MB, 220 s).
+    static constexpr size_t kMaxMessageChars = 10000;
+
     void showResult(const sigapp::PipelineResult& result);
     void showError(const QString& message);
     void clearText() { setPlainText(QString()); }

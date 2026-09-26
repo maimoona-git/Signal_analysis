@@ -10,6 +10,7 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 
+#include "error_text.hpp"
 #include "result_text.hpp"
 
 namespace sigui {
@@ -136,7 +137,7 @@ void MainWindow::runAnalysis() {
     } catch (const std::exception& e) {
         running_ = false;
         run_action_->setEnabled(true);
-        failAnalysis(QString::fromUtf8(e.what()));
+        failAnalysis(QString::fromStdString(sigbridge::describe_exception(e)));
     }
 }
 

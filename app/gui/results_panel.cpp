@@ -12,7 +12,7 @@ ResultsPanel::ResultsPanel(QWidget* parent) : QPlainTextEdit(parent) {
 }
 
 void ResultsPanel::showResult(const sigapp::PipelineResult& result) {
-    setPlainText(QString::fromStdString(sigapp::format_result_text(result)));
+    setPlainText(QString::fromStdString(sigapp::format_result_text(result, kMaxMessageChars)));
 }
 
 void ResultsPanel::showError(const QString& message) {

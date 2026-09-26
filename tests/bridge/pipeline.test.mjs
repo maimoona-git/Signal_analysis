@@ -173,7 +173,10 @@ describe('runPipeline reproduces the original native pipeline', () => {
     const r = RECORDS.find((x) => x.name === 'demo_ldpc_block_real');
     const result = await bridge.runPipeline(asFile(r.file), optionsOf(r));
     assert.equal(result.predictedModulation, r.label);          // what the original's model said
+    assert.equal(result.predictedModulation, 'bpsk');           // and what the native test_demo_captures asserts
     assert.ok(result.decodedBits instanceof Uint8Array);
+    const text = (bits) => { const b = new Uint8Array(bits.length / 8); bits.forEach((bit, i) => { b[i >> 3] |= bit << (7 - (i & 7)); }); return new TextDecoder().decode(b); };
+    assert.equal(text(result.decodedBits), 'SIH2026!');         // the message survives LDPC + block interleaving + BPSK + the real model
     const fsk = RECORDS.find((x) => x.name === 'demo_fsk_plain_real');
     const fskResult = await bridge.runPipeline(asFile(fsk.file), optionsOf(fsk));
     assert.equal(fskResult.predictedModulation, 'fsk');

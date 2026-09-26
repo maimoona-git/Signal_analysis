@@ -120,6 +120,18 @@ scripts/serve.sh               # http://localhost:8080/  (any static server work
 scripts/browser-gui-test.sh    # end to end in headless Chrome: clicks, typing, a real file chooser
 ```
 
+The WASM build stages the whole static site in `build-wasm/dist` on every build (target
+`sigapp_dist`, from scratch each time so nothing stale survives). `scripts/stage-web.sh`
+re-stages without recompiling, e.g. after `npm install` or editing `web/`. Then:
+
+```bash
+scripts/verify-dist.sh         # the site as a deployer meets it (also a ctest, `test_static_site`)
+```
+
+which checks the exact file set (10 files), that nothing from the build machine leaked in and every URL
+is relative, prints sizes, and re-runs the browser test on a *relocated copy* served by a stock
+`python3 -m http.server`.
+
 Drop a `.wav` / `.IQ` file on the page or use "Open File...". The widget tests run on a
 desktop Qt under the offscreen platform; configure the native build with your Qt:
 
@@ -128,8 +140,27 @@ cmake -B build -DCMAKE_PREFIX_PATH=$HOME/Qt/6.8.3/macos     # the host Qt instal
 cmake --build build && ctest --test-dir build               # adds test_gui
 ```
 
-Without a Qt the native build simply skips `/app/gui`. The WASM app is ~14 MB
-(`sigapp.wasm`, Qt Widgets included) plus the ORT runtime's 14 MB.
+Without a Qt the native build simply skips `/app/gui`.
+
+### What gets deployed
+
+| | raw | gzip |
+| --- | ---: | ---: |
+| `sigapp.wasm` (Qt Widgets + the C++ pipeline) | 14.4 MB | 5.4 MB |
+| `vendor/ort/ort-wasm-simd-threaded.wasm` (onnxruntime-web CPU runtime) | 14.2 MB | 3.7 MB |
+| everything else (loader JS, page, model 360 KB) | 0.7 MB | 0.4 MB |
+| **total, 10 files** | **29.4 MB** | **9.4 MB** |
+
+Size-optimising the final link (`-Oz`) was measured and saves only 3.6% because the bulk is Qt's own
+prebuilt libraries, so `-O2` is kept. Let the host compress (any does); the app works from any path.
+
+### Limits
+
+The browser holds a capture, its decoded samples and its spectrogram at the same time. Measured in
+headless Chrome: a 64 MB capture analyses in ~0.2 s, 512 MB in ~2 s, and 768 MB does not fit
+(the heap is capped at 4 GB); the app then reports "out of memory: this capture is too large..."
+and keeps working. The decoded message shown in the results panel is capped at 10,000 characters
+(Qt's layout of one enormous line took minutes); the full text is not otherwise affected.
 
 ## Threading
 

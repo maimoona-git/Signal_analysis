@@ -10,6 +10,7 @@
 // browser in tests/bridge/pipeline.test.mjs.
 
 #include <cmath>
+#include <complex>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -178,6 +179,52 @@ TEST_CASE("pipeline_nfft follows the original's formula") {
     CHECK(pipeline_nfft(1u << 20) == 256);
     CHECK(pipeline_nfft(512) == 256);
     CHECK(pipeline_nfft(511) == 128);
+}
+
+// The native app's own tests for generate_spectrogram and for skipping optional stages
+// (tests/app/test_generate_spectrogram.py, test_pipeline.py).
+TEST_CASE("native: generate_spectrogram has the right shape and axes, and its peak is at the tone") {
+    const unsigned n = 4096, nfft = 256, hop = 64;
+    const double rate = 8000.0, freq = 1500.0;
+    std::vector<std::complex<float>> x(n);
+    for (unsigned i = 0; i < n; ++i) {
+        const double ph = 2.0 * 3.14159265358979323846 * freq * i / rate;
+        x[i] = {static_cast<float>(std::cos(ph)), static_cast<float>(std::sin(ph))};
+    }
+    const auto s = generate_spectrogram(x, rate, nfft, hop);
+    const unsigned expected_frames = (n - nfft) / hop + 1;
+    CHECK(s.frames == expected_frames && s.nfft == nfft);
+    CHECK(s.data.size() == static_cast<size_t>(expected_frames) * nfft);
+    CHECK(s.freqs.size() == nfft && s.times.size() == expected_frames);
+    CHECK_NEAR(s.freqs[0], -rate / 2, 1e-9);                                    // centred on 0
+    CHECK_NEAR(s.freqs[nfft / 2], 0.0, 1e-9);
+    CHECK_NEAR(s.times[1], hop / rate, 1e-12);
+    for (unsigned f = 0; f < s.frames; ++f) {
+        unsigned peak = 0;
+        for (unsigned k = 1; k < nfft; ++k) if (s.data[f * nfft + k] > s.data[f * nfft + peak]) peak = k;
+        CHECK_NEAR(s.freqs[peak], freq, rate / nfft);                           // the peak sits at the tone, every frame
+    }
+}
+
+TEST_CASE("native: the default hop is nfft / 4") {
+    const unsigned n = 2048, nfft = 128;
+    const std::vector<std::complex<float>> x(n, {1.0f, 0.0f});
+    const auto s = generate_spectrogram(x, 8000.0, nfft);
+    CHECK(s.frames == (n - nfft) / (nfft / 4) + 1);
+    CHECK_THROWS(generate_spectrogram(std::vector<std::complex<float>>(10), 8000.0, 256));   // shorter than one window
+}
+
+TEST_CASE("native: with no interleaver or FEC given, those stages are skipped and the bits pass through") {
+    const auto bytes = read_file(data_path("fsk_plain.iq"));
+    PipelineOptions o;
+    o.sample_rate = 8000.0;
+    const auto r = run_pipeline(bytes.data(), bytes.size(), "fsk_plain.iq", o, {"fsk", 1.0});
+    CHECK(!r.deinterleaved_bits.has_value());
+    CHECK(!r.decoded_bits.has_value());
+    CHECK(!r.detection_score.has_value() && !r.detected_interleaver && !r.detected_fec);
+    CHECK(r.demodulated_bits.size() == 64);
+    CHECK(bits_to_text(r.demodulated_bits) == "SIH2026!");
+    CHECK(r.predicted_modulation == "fsk");
 }
 
 TEST_MAIN()

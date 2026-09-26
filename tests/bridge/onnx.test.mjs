@@ -8,6 +8,7 @@
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -81,6 +82,24 @@ describe('onnxruntime-web reproduces the original PyTorch model', () => {
     assert.equal((await clf.classify(asFloat32(dataFile(EXPECTED.cases[0].image_file)), 64, 48)).classes.length, 6);
   });
 
+  it('the batch axis is dynamic in the browser runtime too: batches of 1, 3 and 6 give [batch, classes]', async () => {
+    // (the native app's test_model checks forward-pass shapes for batches of 4 and 1)
+    const images = EXPECTED.cases.slice(0, 6).map((c) => asFloat32(dataFile(c.image_file)));
+    const single = [];
+    for (const image of images) single.push((await clf.classify(image, 64, 48)).probabilities);
+    for (const batch of [1, 3, 6]) {
+      const data = new Float32Array(batch * 64 * 48);
+      images.slice(0, batch).forEach((image, i) => data.set(image, i * 64 * 48));
+      const out = await clf.session.run({ spectrogram: new ort.Tensor('float32', data, [batch, 1, 64, 48]) });
+      assert.deepEqual(out.probabilities.dims, [batch, 6]);
+      for (let i = 0; i < batch; i++) {
+        const row = Array.from(out.probabilities.data.slice(i * 6, (i + 1) * 6));
+        assert.ok(maxAbsDiff(row, single[i]) < 1e-5, `batch ${batch}, row ${i} differs from the same image run alone`);
+        assert.ok(Math.abs(row.reduce((a, b) => a + b, 0) - 1) < 1e-5);
+      }
+    }
+  });
+
   it('is fast enough to be interactive', async () => {
     const image = asFloat32(dataFile(EXPECTED.cases[0].image_file));
     await clf.classify(image, 64, 48);  // warm-up
@@ -103,6 +122,39 @@ describe('createOnnxClassifier / loadModelMeta validate their inputs', () => {
     wrongNames.input.name = 'not_the_input';
     await assert.rejects(createOnnxClassifier({ ort, model: MODEL, meta: wrongNames }), /does not match its metadata/);
     await assert.rejects(createOnnxClassifier({ ort, model: new Uint8Array([1, 2, 3, 4]), meta: META }));
+  });
+});
+
+describe('loading the model over HTTP fails cleanly (the native app raises FileNotFoundError for a missing checkpoint)', () => {
+  let server, base;
+  before(async () => {
+    server = http.createServer((req, res) => {
+      if (req.url === '/meta.json') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(META)); }
+      if (req.url === '/bad-meta.json') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{"classes": "nope"}'); }
+      if (req.url === '/model.onnx') { res.writeHead(200); return res.end(MODEL); }
+      res.writeHead(404); res.end('not found');
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    base = `http://127.0.0.1:${server.address().port}`;
+  });
+  after(() => server.close());
+
+  it('loads model and metadata from URLs when they exist', async () => {
+    const clf = await createOnnxClassifier({ ort, model: `${base}/model.onnx`, meta: `${base}/meta.json` });
+    const image = asFloat32(dataFile(EXPECTED.cases[0].image_file));
+    assert.ok(maxAbsDiff((await clf.classify(image, 64, 48)).probabilities, EXPECTED.cases[0].probabilities) < 1e-4);
+    await clf.dispose();
+  });
+
+  it('rejects with the HTTP status for missing metadata, and for malformed metadata', async () => {
+    await assert.rejects(loadModelMeta(`${base}/missing.json`), /HTTP 404/);
+    await assert.rejects(createOnnxClassifier({ ort, model: MODEL, meta: `${base}/missing.json` }), /HTTP 404/);
+    await assert.rejects(loadModelMeta(`${base}/bad-meta.json`), /non-empty array/);
+  });
+
+  it('rejects when the model file itself is missing or unreachable', async () => {
+    await assert.rejects(createOnnxClassifier({ ort, model: `${base}/missing.onnx`, meta: META }));
+    await assert.rejects(createOnnxClassifier({ ort, model: 'http://127.0.0.1:1/never.onnx', meta: META }));
   });
 });
 

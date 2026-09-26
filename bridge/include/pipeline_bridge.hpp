@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -15,8 +16,10 @@
 
 namespace sigbridge {
 
-using PipelineCallback =
-    std::function<void(bool ok, const sigapp::PipelineResult& result, const std::string& error)>;
+// The result is shared, not copied: it holds the capture's samples and its spectrogram,
+// several times the size of the file, so handing it around by value is not an option.
+using PipelineCallback = std::function<void(bool ok, std::shared_ptr<const sigapp::PipelineResult> result,
+                                            const std::string& error)>;
 
 // Throws synchronously (std::invalid_argument / std::runtime_error) if the file
 // cannot be ingested or is too short to analyse; everything after the ML call

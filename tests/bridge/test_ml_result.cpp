@@ -3,9 +3,12 @@
 
 #include <cmath>
 #include <limits>
+#include <new>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "error_text.hpp"
 #include "ml_result.hpp"
 #include "../harness.hpp"
 
@@ -40,6 +43,19 @@ TEST_CASE("make_ml_result rejects malformed classifier output") {
     CHECK_THROWS(make_ml_result({"a", "b"}, {0.5f, inf}));         // inf
     CHECK_THROWS(make_ml_result({"a", "b"}, {-0.1f, 0.5f}));       // negative
     CHECK_THROWS(make_ml_result({"a", "b"}, {0.5f, 1.5f}));        // > 1 (e.g. raw logits)
+}
+
+TEST_CASE("describe_exception turns out-of-memory into an actionable message and leaves the rest alone") {
+    const std::string oom = sigbridge::describe_exception(std::bad_alloc());
+    CHECK(oom.find("out of memory") != std::string::npos);
+    CHECK(oom.find("too large") != std::string::npos);
+    CHECK(oom.find("bad_alloc") == std::string::npos);             // no C++ jargon shown to the user
+    CHECK(sigbridge::describe_exception(std::runtime_error("wav: not a valid RIFF/WAVE file: x.wav")) ==
+          "wav: not a valid RIFF/WAVE file: x.wav");
+    CHECK(sigbridge::describe_exception(std::invalid_argument("bad option")) == "bad option");
+    try { throw std::bad_alloc(); } catch (const std::exception& e) {   // as caught through the base class
+        CHECK(sigbridge::describe_exception(e).find("out of memory") != std::string::npos);
+    }
 }
 
 TEST_MAIN()

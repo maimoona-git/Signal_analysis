@@ -85,13 +85,15 @@ Full details in `BUILDING.md`.
   then `scripts/build-liquid-wasm.sh` (liquid-dsp 1.8.2 → `~/wasm-deps/install`,
   internal FFT, no fftw)
 - WASM build: `scripts/build-wasm.sh` (qt-cmake chainloading Emscripten →
-  `build-wasm/`, servable app staged in `build-wasm/dist/`)
+  `build-wasm/`); every build re-stages the complete static site in `build-wasm/dist/`
+  (10 files, rebuilt from scratch; `scripts/stage-web.sh` re-stages without recompiling)
 - Native build: `cmake -B build && cmake --build build` (add
   `-DPython3_EXECUTABLE=<python with pybind11>` for the pybind module)
 - Local serve: `scripts/serve.sh [port]` (plain static server on `dist/`)
 - JS deps: `npm install` (onnxruntime-web, puppeteer-core); browser checks:
-  `scripts/browser-smoke.sh` (ML chain), `scripts/browser-gui-test.sh` (the GUI);
-  after `scripts/build-wasm.sh` run `scripts/stage-web.sh` to make `build-wasm/dist` servable
+  `scripts/browser-smoke.sh` (ML chain), `scripts/browser-gui-test.sh` (the GUI in real
+  Chrome), `scripts/verify-dist.sh` (the static site: file set, no leaked paths, relocated
+  copy on a stock server; a ctest too)
 - Widget tests need a desktop Qt: `cmake -B build -DCMAKE_PREFIX_PATH=~/Qt/6.8.3/macos`
 - Run tests: `ctest --test-dir build` (native) or
   `ctest --test-dir build-wasm` (WASM, runs under node; needs emsdk env; also
@@ -147,3 +149,18 @@ in the WASM module with the ML call-out to onnxruntime-web (shell: `web/index.ht
 `scripts/stage-web.sh`). Results panel text is byte-identical to the original PyQt panel
 (72 scenarios). Tested by widget tests on desktop Qt (offscreen) and end to end in
 headless Chrome (real clicks/typing/file chooser; `scripts/browser-gui-test.sh`).
+
+Phase 8 done, **the port is complete.** Test coverage audited against all 118 native tests
+(`tests/COVERAGE.md`, test by test): gaps filled (real fixture files, the native DSP/correlate/
+dispatcher/spectrogram cases verbatim, browser-runtime batch shapes, HTTP model-load failures,
+typed-array subviews, WAV and error paths in the real browser, sub-path hosting, no external
+requests). 205 automated tests + 608 comparisons against the original. Two real defects were
+found by measuring large captures and fixed: the results panel took 220 s to lay out a 2 MB
+decoded-message line (now capped at 10,000 chars) and the waterfall built a picture with one
+column per frame (now folded to 4096 columns, peak-hold); the pipeline result is no longer
+copied, and out-of-memory is reported in words. Ceiling: 512 MB analyses in ~2 s, 768 MB does
+not fit (4 GB heap cap). The static site (`build-wasm/dist`, 10 files, 29 MB / 9 MB gzip) is
+self-contained, relative-URL only, and verified relocated on a stock python server.
+The `-Oz` link was measured (saves 3.6%, Qt's prebuilt libraries dominate) and not adopted.
+Open items are inherited limits, not port defects: shipped weights misclassify some
+modulations; LDPC/convolutional+FEC limits of the native app (see `app/pipeline/README.md`).

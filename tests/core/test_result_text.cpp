@@ -125,4 +125,27 @@ TEST_CASE("the status line rounds the confidence like Python's :.0%") {
     CHECK(format_done_status(r) == "Done. Predicted modulation: qpsk (2% confidence).");
 }
 
+TEST_CASE("a message longer than the limit is cut with a note; shorter or equal ones are untouched") {
+    PipelineResult r;
+    r.predicted_modulation = "bpsk";
+    r.boundaries.header_pattern = {1, 0};
+    r.demodulated_bits.assign(8 * 20, 1);              // 20 bytes of 0xFF -> not ASCII -> a 40-character hex string
+
+    const std::string full = format_result_text(r);
+    CHECK(full.find("Decoded message:      '" + std::string(40, 'f') + "'") != std::string::npos);
+    CHECK(format_result_text(r, 40) == full);           // exactly at the limit: unchanged
+    CHECK(format_result_text(r, 1000) == full);
+
+    const std::string cut = format_result_text(r, 10);
+    CHECK(cut.find("Decoded message:      '" + std::string(10, 'f') + "' ... (40 characters in all, the first 10 shown)") != std::string::npos);
+    CHECK(cut.find(std::string(11, 'f')) == std::string::npos);         // nothing beyond the limit leaks
+    // every other line is identical to the full text
+    auto without_message = [](std::string t) {
+        const auto a = t.find("Decoded message:");
+        return t.substr(0, a) + t.substr(t.find('\n', a));
+    };
+    CHECK(without_message(cut) == without_message(full));
+    CHECK(format_result_text(r, 0).find("'' ... (40 characters in all, the first 0 shown)") != std::string::npos);
+}
+
 TEST_MAIN()

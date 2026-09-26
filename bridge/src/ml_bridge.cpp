@@ -8,9 +8,11 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#include "error_text.hpp"
 #include "ml_preprocess.hpp"
 
 using emscripten::val;
+using sigbridge::describe_exception;
 
 namespace sigbridge {
 
@@ -83,7 +85,7 @@ void ml_complete(uint32_t id, bool ok, val payload) {
             error = payload.as<std::string>();
         }
     } catch (const std::exception& e) {
-        error = e.what();
+        error = describe_exception(e);
     }
 
     try {

@@ -146,4 +146,45 @@ TEST_CASE("load_signal: format by extension, rates, and errors, like io.py") {
     CHECK(msg == "unsupported file extension: '.bin' (expected .wav or .iq)");
 }
 
+// The native app's own dispatcher tests (test_fec_dispatcher.py, test_interleave_dispatcher.py).
+TEST_CASE("native: fec dispatcher round-trips each scheme in its own unit (bits vs bytes)") {
+    const auto bits = random_bits(64, 0);
+    for (const char* scheme : {"viterbi", "ldpc"}) {
+        CHECK(fec_decode(fec_encode(bits, scheme), scheme, 64) == bits);              // msg_len in bits
+    }
+    const auto byte_bits = random_bits(64, 1);
+    for (const char* scheme : {"rs", "concatenated"}) {
+        CHECK(fec_decode(fec_encode(byte_bits, scheme), scheme, 64 / 8) == byte_bits);   // msg_len in bytes
+    }
+    CHECK_THROWS(fec_encode(random_bits(8), "not_a_scheme"));
+    CHECK_THROWS(fec_decode(random_bits(8), "not_a_scheme", 8));
+}
+
+TEST_CASE("native: rs pads bits that are not a whole number of bytes with zeros") {
+    const auto bits = random_bits(20, 2);                          // not a multiple of 8
+    const auto decoded = fec_decode(fec_encode(bits, "rs"), "rs", 3);   // ceil(20 / 8) = 3 bytes -> 24 bits back
+    CHECK(decoded.size() == 24);
+    CHECK(std::equal(bits.begin(), bits.end(), decoded.begin()));
+    for (size_t i = 20; i < 24; ++i) CHECK(decoded[i] == 0);
+}
+
+TEST_CASE("native: interleave dispatcher round-trips every kind; convolutional after its delay offset") {
+    const auto bits = random_bits(24, 0);
+    for (const auto& spec : {InterleaverSpec::block(4, 6), InterleaverSpec::diagonal(4, 6), InterleaverSpec::pseudo_random(7)}) {
+        CHECK(deinterleave(interleave(bits, spec), spec) == bits);
+    }
+    const auto conv = InterleaverSpec::convolutional(3, 2);
+    const auto recovered = deinterleave(interleave(bits, conv), conv);
+    const size_t offset = 3 * 2 * 2;                               // branches * (branches - 1) * delay
+    CHECK(std::equal(recovered.begin() + static_cast<long>(offset), recovered.end(), bits.begin()));
+    CHECK_THROWS(interleave(random_bits(8), InterleaverSpec{"not_a_scheme", {}, {}, {}, {}, {}}));
+    CHECK_THROWS(deinterleave(random_bits(8), InterleaverSpec{"not_a_scheme", {}, {}, {}, {}, {}}));
+}
+
+TEST_CASE("native: the interleave dispatcher is case-insensitive") {
+    const auto bits = random_bits(24, 0);
+    CHECK(interleave(bits, InterleaverSpec{"BLOCK", 4u, 6u, {}, {}, {}}) == interleave(bits, InterleaverSpec::block(4, 6)));
+    CHECK(fec_encode(bits, "LDPC") == fec_encode(bits, "ldpc"));
+}
+
 TEST_MAIN()

@@ -19,12 +19,14 @@
 #include <vector>
 
 #include "ingest.hpp"
+#include "error_text.hpp"
 #include "js_util.hpp"
 #include "ml_bridge.hpp"
 #include "pipeline_bridge.hpp"
 
 using emscripten::val;
 using sigbridge::bytes_from_js;
+using sigbridge::describe_exception;
 using sigbridge::throw_js_error;
 
 namespace {
@@ -62,7 +64,7 @@ val ingest_file(val bytes, std::string filename, double sample_rate) {
         const std::vector<uint8_t> data = bytes_from_js(bytes);
         return signal_to_js(sigcore::ingest_bytes(data.data(), data.size(), filename, sample_rate));
     } catch (const std::exception& e) {
-        error = e.what();
+        error = describe_exception(e);
     }
     throw_js_error(error);
 }
@@ -93,7 +95,7 @@ void classify_spectrogram(val spectrogram, unsigned int rows, unsigned int cols,
             });
         return;
     } catch (const std::exception& e) {
-        error = e.what();
+        error = describe_exception(e);
     }
     throw_js_error(error);
 }
@@ -116,7 +118,7 @@ void classify_capture(val bytes, std::string filename, double sample_rate, val c
             });
         return;
     } catch (const std::exception& e) {
-        error = e.what();
+        error = describe_exception(e);
     }
     throw_js_error(error);
 }
@@ -282,16 +284,16 @@ void run_pipeline(val bytes, std::string filename, val options_js, val callback)
         const sigapp::PipelineOptions options = options_from_js(options_js);
         sigbridge::run_pipeline_async(
             data.data(), data.size(), filename, options,
-            [callback](bool ok, const sigapp::PipelineResult& result, const std::string& message) {
+            [callback](bool ok, std::shared_ptr<const sigapp::PipelineResult> result, const std::string& message) {
                 if (ok) {
-                    callback(val::null(), pipeline_result_to_js(result));
+                    callback(val::null(), pipeline_result_to_js(*result));
                 } else {
                     callback(val::global("Error").new_(message), val::null());
                 }
             });
         return;
     } catch (const std::exception& e) {
-        error = e.what();
+        error = describe_exception(e);
     }
     throw_js_error(error);
 }

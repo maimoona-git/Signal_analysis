@@ -1,5 +1,6 @@
 #include "result_text.hpp"
 
+#include <cstdint>
 #include <cstdio>
 
 #include "correlate.hpp"
@@ -55,7 +56,7 @@ std::string python_repr(const std::string& text) {
     return out;
 }
 
-std::string format_result_text(const PipelineResult& r) {
+std::string format_result_text(const PipelineResult& r, size_t max_message_chars) {
     const FrameBoundaries& b = r.boundaries;
     std::string t;
     auto line = [&](const std::string& s) { t += s + "\n"; };
@@ -78,7 +79,15 @@ std::string format_result_text(const PipelineResult& r) {
     if (r.decoded_bits.has_value()) line("FEC-decoded bits:     " + std::to_string(r.decoded_bits->size()));
 
     const Bits& final_bits = r.decoded_bits ? *r.decoded_bits : r.deinterleaved_bits ? *r.deinterleaved_bits : r.demodulated_bits;
-    line("Decoded message:      " + python_repr(bits_to_text(final_bits)));
+    std::string message = bits_to_text(final_bits);
+    if (message.size() > max_message_chars) {
+        const size_t total = message.size();
+        message.resize(max_message_chars);
+        line("Decoded message:      " + python_repr(message) + " ... (" + std::to_string(total) +
+             " characters in all, the first " + std::to_string(max_message_chars) + " shown)");
+    } else {
+        line("Decoded message:      " + python_repr(message));
+    }
 
     line("");
     line("Header pattern:       " + bits_string(b.header_pattern));

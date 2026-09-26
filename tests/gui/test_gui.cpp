@@ -4,6 +4,7 @@
 // orientation, scale and colour are checked, not just "something drew".
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QLabel>
 #include <QMessageBox>
 #include <QSplitter>
@@ -20,6 +21,7 @@
 #include "result_text.hpp"
 #include "../harness.hpp"
 #include "../record_file.hpp"
+#include "../testutil.hpp"
 
 using namespace sigui;
 using namespace sigtest;
@@ -145,6 +147,34 @@ TEST_CASE("waterfall: time runs left to right, low frequencies at the bottom, ho
     CHECK(cell_center(0, 0).y() > cell_center(0, 7).y());          // low frequency is lower on screen
     CHECK(cell_center(0, 0).x() < cell_center(5, 0).x());          // later frames are further right
     CHECK(w.image().pixel(2, 8 - 1 - 5) == viridis(255));          // stored with row 0 = highest frequency
+}
+
+TEST_CASE("waterfall: a long capture is folded into a bounded picture without losing a burst") {
+    // 20,000 frames would be a 20,000-column picture; it is folded into kMaxColumns, keeping
+    // the per-bin maximum so one loud frame stays visible, with levels from the whole data.
+    auto s = make_spectrogram(20000, 8, -50.0f);
+    s.times.clear();
+    for (unsigned i = 0; i < s.frames; ++i) s.times.push_back(0.001 * i);
+    s.data[12345 * 8 + 5] = 100.0f;                            // one hot cell in one frame
+    s.data[7 * 8 + 0] = -300.0f;                               // and one very cold cell elsewhere
+    WaterfallWidget w;
+    w.setData(s);
+    CHECK(w.image().width() == static_cast<int>(WaterfallWidget::kMaxColumns) && w.image().height() == 8);
+    CHECK(w.levelMax() == 100.0 && w.levelMin() == -300.0);     // whole-data levels, not the picture's
+    const int column = static_cast<int>(12345ull * WaterfallWidget::kMaxColumns / 20000);
+    CHECK(w.image().pixel(column, 8 - 1 - 5) == viridis(255));  // the burst survives, in the right column and row
+    int hot = 0;
+    for (int x = 0; x < w.image().width(); ++x)
+        for (int y = 0; y < 8; ++y) hot += (w.image().pixel(x, y) == viridis(255));
+    CHECK(hot == 1);                                           // and only there
+    CHECK(w.imageRect() == QRectF(0.0, -4000.0, 19.999, 7000.0));   // the time span is unchanged
+
+    auto small = make_spectrogram(WaterfallWidget::kMaxColumns, 4, 1.0f);   // exactly at the limit: one column per frame
+    w.setData(small);
+    CHECK(w.image().width() == static_cast<int>(WaterfallWidget::kMaxColumns));
+    auto just_over = make_spectrogram(WaterfallWidget::kMaxColumns + 1, 4, 1.0f);
+    w.setData(just_over);
+    CHECK(w.image().width() == static_cast<int>(WaterfallWidget::kMaxColumns));
 }
 
 TEST_CASE("waterfall: colours span the range monotonically") {
@@ -284,6 +314,28 @@ TEST_CASE("results panel is read-only and shows results, errors and nothing") {
     CHECK(panel.toPlainText() == QStringLiteral("Error: boom"));
     panel.clearText();
     CHECK(panel.toPlainText().isEmpty());
+}
+
+TEST_CASE("results panel: a decoded message of millions of bits is cut, and shows instantly") {
+    // Shown whole on one wrapped line, a message of millions of characters makes Qt's layout
+    // take minutes (measured in the browser: 8M bits -> a 2 MB hex string -> 220 s). 4M bits
+    // (a million characters) is enough to see it: ~16 s uncapped natively, instant capped.
+    sigapp::PipelineResult r;
+    r.predicted_modulation = "bpsk";
+    r.demodulated_bits = random_bits(4'000'000, 5);
+    r.boundaries.header_pattern = {1, 0, 1};
+    ResultsPanel panel;
+    QElapsedTimer timer;
+    timer.start();
+    panel.showResult(r);
+    panel.resize(400, 400);
+    panel.grab();                                            // force the text layout too
+    CHECK(timer.elapsed() < 3000);
+    const QString text = panel.toPlainText();
+    CHECK(text.size() < 12000);
+    CHECK(text.contains("characters in all, the first 10000 shown"));
+    CHECK(text.contains("Frame period:"));                   // the rest of the panel is intact
+    CHECK(text.contains("Payload spans found:"));
 }
 
 // --- main window ---------------------------------------------------------------------

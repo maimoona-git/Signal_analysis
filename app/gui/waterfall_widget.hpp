@@ -19,9 +19,17 @@ public:
     void clearData();
 
     bool hasData() const { return !image_.isNull(); }
-    // One pixel per (frame, frequency bin); row 0 is the highest frequency.
+    // The picture is at most this many columns wide, whatever the capture length: a screen
+    // is a few thousand pixels across, and a picture with a column per frame (125,000 for an
+    // 8-million-sample capture) costs memory and is rescaled on every repaint. Groups of
+    // frames are folded into one column by taking the loudest value per frequency bin
+    // ("peak hold"), so a short burst is never averaged away.
+    static constexpr unsigned kMaxColumns = 4096;
+
+    // One pixel per (frame group, frequency bin); row 0 is the highest frequency. With
+    // at most kMaxColumns frames this is exactly one column per frame.
     const QImage& image() const { return image_; }
-    // The dB range mapped onto the colour map.
+    // The dB range mapped onto the colour map (of the whole spectrogram, not just the picture).
     double levelMin() const { return levelMin_; }
     double levelMax() const { return levelMax_; }
     // The data-space rectangle the image covers ([t0, tN] x [f0, fN]).
