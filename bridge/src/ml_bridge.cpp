@@ -8,6 +8,8 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#include "ml_preprocess.hpp"
+
 using emscripten::val;
 
 namespace sigbridge {
@@ -101,6 +103,11 @@ void classify_async(const std::vector<float>& spectrogram, unsigned int rows, un
     const uint32_t id = g_next_id++;
     pending()[id] = std::move(done);
     sig_ml_start(id, spectrogram.data(), static_cast<int>(rows), static_cast<int>(cols));
+}
+
+void classify_signal(const sigcore::SignalData& signal, MlCallback done) {
+    const std::vector<float> image = sigcore::make_spectrogram_image(signal.samples);
+    classify_async(image, sigcore::kMlNfft, sigcore::kMlFrames, std::move(done));
 }
 
 std::size_t pending_count() { return pending().size(); }

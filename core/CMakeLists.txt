@@ -20,6 +20,7 @@ set(SIGCORE_PORTABLE_SOURCES
 set(SIGCORE_LIQUID_SOURCES
   src/dsp.cpp
   src/demod.cpp
+  src/ml_preprocess.cpp
 )
 
 add_library(sigcore_core STATIC ${SIGCORE_PORTABLE_SOURCES})

@@ -87,6 +87,22 @@ staged in `build-wasm/dist/`: `index.html` (from `/web`), `sigapp.js`,
 `sigapp.wasm` and `qtloader.js`. Run `ctest` in a shell where the emsdk
 environment is active (`source ~/emsdk/emsdk_env.sh`) so it can find node.
 
+## 5. ML model (browser inference)
+
+The exported model is committed (`ml/models/`), so building the app needs no
+Python. For the JS side:
+
+```bash
+npm install                        # onnxruntime-web 1.30.0 (lockfile committed)
+scripts/vendor-ort.sh              # copies the CPU wasm runtime to build-wasm/dist/vendor/ort
+scripts/browser-smoke.sh           # headless Chrome: full chain on 11 fixtures vs the original Python
+```
+
+`ctest` also runs `tests/bridge/onnx.test.mjs` (real model + real bridge under
+node). The ORT runtime is served from the app's own origin (no CDN, works
+offline) and is 14 MB, by far the largest asset. To regenerate the model or the
+fixtures see `ml/README.md`.
+
 ## Threading
 
 The WASM build is **single-threaded** (the `wasm_singlethread` Qt kit, and no

@@ -2,6 +2,9 @@
 build/
 build-*/
 
+# JS dependencies (package-lock.json is committed)
+node_modules/
+
 # Python (ml/ tooling)
 __pycache__/
 *.py[cod]

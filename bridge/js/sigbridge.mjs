@@ -77,6 +77,24 @@ export class SigBridge {
     });
   }
 
+  /**
+   * The whole chain in one call: bytes -> samples -> spectrogram image (C++) ->
+   * the registered classifier -> validated result. Same input/result shapes as
+   * ingest() and classify(); rejects if the file cannot be parsed, is shorter
+   * than one 64-sample FFT window, or the classifier fails.
+   */
+  async classifyCapture(source, { filename, sampleRate = 0 } = {}) {
+    const name = filename ?? source?.name ?? '';
+    const bytes = await toBytes(source);
+    return new Promise((resolve, reject) => {
+      try {
+        this.module.classifyCapture(bytes, name, sampleRate, (err, result) => (err ? reject(err) : resolve(result)));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
   /** Classifications started but not yet completed (should settle back to 0). */
   get pendingClassifications() {
     return this.module.mlPendingCount();

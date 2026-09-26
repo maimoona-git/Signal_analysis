@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>PS 26147 ML smoke test</title>
+  <style>body { font: 13px ui-monospace, monospace; padding: 1rem; } .fail { color: #b00020; }</style>
+</head>
+<body>
+  <!-- Dev page, not the app: proves the full ML chain works in a real browser served
+       from a plain static server (no COOP/COEP): file bytes -> C++/WASM bridge ->
+       spectrogram image -> onnxruntime-web -> validated result, compared with the
+       original Python results. Staged and driven by scripts/browser-smoke.sh. -->
+  <h3>ML smoke test</h3>
+  <pre id="log">running…</pre>
+  <script src="sigbridge.js"></script>
+  <script type="module">
+    import * as ort from './vendor/ort/ort.wasm.min.mjs';
+    import { SigBridge } from './sigbridge.mjs';
+    import { createOnnxClassifier } from './onnx-classifier.mjs';
+
+    const log = document.getElementById('log');
+    const lines = [];
+    const say = (s) => { lines.push(s); log.textContent = lines.join('\n'); };
+    const TOL = 1e-4;
+
+    try {
+      say(`crossOriginIsolated = ${self.crossOriginIsolated}  (false: no COOP/COEP headers, single-threaded)`);
+      const expected = await (await fetch('fixtures/expected.json')).json();
+      const clf = await createOnnxClassifier({
+        ort,
+        model: 'models/modulation_classifier.onnx',
+        meta: 'models/modulation_classifier.json',
+        wasmPaths: 'vendor/ort/',
+      });
+      const bridge = await SigBridge.create(createSigBridge);
+      bridge.setClassifier(clf.classify);
+
+      let passed = 0;
+      for (const c of expected.cases) {
+        const bytes = new Uint8Array(await (await fetch('fixtures/' + c.iq_file)).arrayBuffer());
+        const file = new File([bytes], c.iq_file);            // what an <input type="file"> yields
+        const r = await bridge.classifyCapture(file, { sampleRate: c.sample_rate });
+        const diff = Math.max(...r.probabilities.map((p, i) => Math.abs(p - c.probabilities[i])));
+        const ok = r.label === c.label && diff < TOL;
+        if (ok) passed++;
+        say(`${ok ? 'ok  ' : 'FAIL'} ${c.name.padEnd(18)} ${r.label.padEnd(6)} ${r.confidence.toFixed(3)}  max|diff| vs python ${diff.toExponential(1)}`);
+      }
+      const all = passed === expected.cases.length;
+      say(`SMOKE ${all ? 'PASS' : 'FAIL'} ${passed}/${expected.cases.length}`);
+      if (!all) log.className = 'fail';
+    } catch (e) {
+      log.className = 'fail';
+      say(`SMOKE FAIL exception: ${e && e.stack || e}`);
+    }
+  </script>
+</body>
+</html>

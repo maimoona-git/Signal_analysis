@@ -1,0 +1,26 @@
+{
+  "name": "modulation_classifier",
+  "classes": [
+    "bpsk",
+    "qpsk",
+    "psk8",
+    "qam16",
+    "qam64",
+    "fsk"
+  ],
+  "input": {
+    "name": "spectrogram",
+    "layout": "NCHW",
+    "dtype": "float32",
+    "channels": 1,
+    "height": 64,
+    "width": 48
+  },
+  "output": {
+    "name": "probabilities",
+    "kind": "softmax"
+  },
+  "opset": 17,
+  "source_checkpoint_sha256": "9df4cb1574e0494cb93da23699b43e99166b18187007707521723d9715b1caec",
+  "onnx_sha256": "93c30b0b7ba63aef89789d050095cd93f170d48cc2deb0426cfa691b2a880fea"
+}

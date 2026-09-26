@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "ml_result.hpp"
+#include "signal_data.hpp"
 
 namespace sigbridge {
 
@@ -34,6 +35,13 @@ using MlCallback = std::function<void(bool ok, const MlResult& result, const std
 // before returning, so the caller's vector may be destroyed immediately.
 void classify_async(const std::vector<float>& spectrogram, unsigned int rows, unsigned int cols,
                     MlCallback done);
+
+// The pipeline's ML step: builds the classifier's input image from a capture
+// (sigcore::make_spectrogram_image, the C++ port of the training-time
+// preprocessing) and hands it to classify_async. Throws std::runtime_error
+// synchronously if the capture is too short to preprocess; every later failure
+// arrives through `done`.
+void classify_signal(const sigcore::SignalData& signal, MlCallback done);
 
 // Number of classify_async calls whose callback has not fired yet (for leak
 // checks: it must return to 0 once every Promise has settled).

@@ -41,6 +41,21 @@ Promise without Asyncify, which would instrument every function in the Qt app
 (bigger, slower). Phase 6's pipeline is therefore split at the ML step and
 resumes in `done`.
 
+## The whole chain
+
+`bridge.classifyCapture(file, { sampleRate })` (Embind `classifyCapture`) runs
+bytes -> `ingest_bytes` -> `make_spectrogram_image` (C++) -> `classify_async` ->
+the registered classifier -> validated result. With `web/js/onnx-classifier.mjs`
+as the classifier this is the browser ML path:
+
+```js
+import * as ort from './vendor/ort/ort.wasm.min.mjs';          // scripts/vendor-ort.sh
+const clf = await createOnnxClassifier({ ort, model: 'models/modulation_classifier.onnx',
+                                         meta: 'models/modulation_classifier.json', wasmPaths: 'vendor/ort/' });
+bridge.setClassifier(clf.classify);
+const { label, confidence, probabilities } = await bridge.classifyCapture(file, { sampleRate });
+```
+
 ## Targets
 
 - `sigbridge_portable`: `ml_result` validation, plain C++ (native + WASM tests)

@@ -33,6 +33,7 @@ if(EMSCRIPTEN)
   elseif(SIG_NODE)
     add_test(NAME test_bridge_js
       COMMAND ${SIG_NODE} --test ${PROJECT_SOURCE_DIR}/tests/bridge/bridge.test.mjs
+              ${PROJECT_SOURCE_DIR}/tests/bridge/onnx.test.mjs
       WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(test_bridge_js PROPERTIES
       ENVIRONMENT "SIGBRIDGE_JS=$<TARGET_FILE:sigbridge_module>")

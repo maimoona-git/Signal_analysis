@@ -1,0 +1,11 @@
+bpsk bpsk.iq bpsk.image.f32 16000.0 3200
+qpsk qpsk.iq qpsk.image.f32 4000.0 800
+psk8 psk8.iq psk8.image.f32 8000.0 1600
+qam16 qam16.iq qam16.image.f32 16000.0 3200
+qam64 qam64.iq qam64.image.f32 16000.0 3200
+fsk fsk.iq fsk.image.f32 8000.0 1600
+edge_min_len_64 edge_min_len_64.iq edge_min_len_64.image.f32 8000.0 64
+edge_pad_100 edge_pad_100.iq edge_pad_100.image.f32 8000.0 100
+edge_crop_157 edge_crop_157.iq edge_crop_157.image.f32 8000.0 157
+edge_long_20000 edge_long_20000.iq edge_long_20000.image.f32 8000.0 20000
+edge_zeros_512 edge_zeros_512.iq edge_zeros_512.image.f32 8000.0 512

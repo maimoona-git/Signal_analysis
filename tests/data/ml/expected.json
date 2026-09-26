@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "classes": [
+    "bpsk",
+    "qpsk",
+    "psk8",
+    "qam16",
+    "qam64",
+    "fsk"
+  ],
+  "nfft": 64,
+  "frames": 48,
+  "cases": [
+    {
+      "name": "bpsk",
+      "true_class": "bpsk",
+      "iq_file": "bpsk.iq",
+      "image_file": "bpsk.image.f32",
+      "sample_rate": 16000.0,
+      "num_samples": 3200,
+      "label": "bpsk",
+      "confidence": 0.9999969005584717,
+      "probabilities": [
+        0.9999969005584717,
+        3.8890237874511513e-07,
+        3.886022170718206e-08,
+        3.506403913888789e-07,
+        1.170159151797634e-07,
+        2.3049408355291234e-06
+      ]
+    },
+    {
+      "name": "qpsk",
+      "true_class": "qpsk",
+      "iq_file": "qpsk.iq",
+      "image_file": "qpsk.image.f32",
+      "sample_rate": 4000.0,
+      "num_samples": 800,
+      "label": "psk8",
+      "confidence": 0.3235567510128021,
+      "probabilities": [
+        0.01755186915397644,
+        0.24008703231811523,
+        0.3235567510128021,
+        0.23002079129219055,
+        0.1879211813211441,
+        0.0008624045876786113
+      ]
+    },
+    {
+      "name": "psk8",
+      "true_class": "psk8",
+      "iq_file": "psk8.iq",
+      "image_file": "psk8.image.f32",
+      "sample_rate": 8000.0,
+      "num_samples": 1600,
+      "label": "qpsk",
+      "confidence": 0.4371880292892456,
+      "probabilities": [
+        0.0067329732701182365,
+        0.4371880292892456,
+        0.24767202138900757,
+        0.1421084851026535,
+        0.16410008072853088,
+        0.002198472386226058
+      ]
+    },
+    {
+      "name": "qam16",
+      "true_class": "qam16",
+      "iq_file": "qam16.iq",
+      "image_file": "qam16.image.f32",
+      "sample_rate": 16000.0,
+      "num_samples": 3200,
+      "label": "psk8",
+      "confidence": 0.31640002131462097,
+      "probabilities": [
+        0.001058569410815835,
+        0.25786617398262024,
+        0.31640002131462097,
+        0.27419033646583557,
+        0.1502864807844162,
+        0.00019832621910609305
+      ]
+    },
+    {
+      "name": "qam64",
+      "true_class": "qam64",
+      "iq_file": "qam64.iq",
+      "image_file": "qam64.image.f32",
+      "sample_rate": 16000.0,
+      "num_samples": 3200,
+      "label": "psk8",
+      "confidence": 0.4057843089103699,
+      "probabilities": [
+        0.0002501272247172892,
+        0.33474209904670715,
+        0.4057843089103699,
+        0.1633286029100418,
+        0.09560049325227737,
+        0.0002942717110272497
+      ]
+    },
+    {
+      "name": "fsk",
+      "true_class": "fsk",
+      "iq_file": "fsk.iq",
+      "image_file": "fsk.image.f32",
+      "sample_rate": 8000.0,
+      "num_samples": 1600,
+      "label": "fsk",
+      "confidence": 0.9999998807907104,
+      "probabilities": [
+        1.1482062234335899e-07,
+        5.286964199768818e-09,
+        4.0711479326605016e-11,
+        3.6508258638434654e-09,
+        2.0144872436844707e-08,
+        0.9999998807907104
+      ]
+    },
+    {
+      "name": "edge_min_len_64",
+      "true_class": null,
+      "iq_file": "edge_min_len_64.iq",
+      "image_file": "edge_min_len_64.image.f32",
+      "sample_rate": 8000.0,
+      "num_samples": 64,
+      "label": "fsk",
+      "confidence": 0.9943085312843323,
+      "probabilities": [
+        1.786439952411456e-06,
+        0.005518360063433647,
+        0.00015131621330510825,
+        1.8088267097482458e-05,
+        1.884819084807532e-06,
+        0.9943085312843323
+      ]
+    },
+    {
+      "name": "edge_pad_100",
+      "true_class": null,
+      "iq_file": "edge_pad_100.iq",
+      "image_file": "edge_pad_100.image.f32",
+      "sample_rate": 8000.0,
+      "num_samples": 100,
+      "label": "fsk",
+      "confidence": 0.9316591620445251,
+      "probabilities": [
+        0.0040161325596272945,
+        0.058496370911598206,
+        0.004418841563165188,
+        0.0012397083919495344,
+        0.0001697302795946598,
+        0.9316591620445251
+      ]
+    },
+    {
+      "name": "edge_crop_157",
+      "true_class": null,
+      "iq_file": "edge_crop_157.iq",
+      "image_file": "edge_crop_157.image.f32",
+      "sample_rate": 8000.0,
+      "num_samples": 157,
+      "label": "fsk",
+      "confidence": 0.8947131037712097,
+      "probabilities": [
+        0.003088017227128148,
+        0.09459435194730759,
+        0.0056925686076283455,
+        0.0016309263883158565,
+        0.0002810329897329211,
+        0.8947131037712097
+      ]
+    },
+    {
+      "name": "edge_long_20000",
+      "true_class": null,
+      "iq_file": "edge_long_20000.iq",
+      "image_file": "edge_long_20000.image.f32",
+      "sample_rate": 8000.0,
+      "num_samples": 20000,
+      "label": "bpsk",
+      "confidence": 0.8111874461174011,
+      "probabilities": [
+        0.8111874461174011,
+        0.0014831848675385118,
+        4.75264314445667e-05,
+        0.0002389996952842921,
+        7.924672536319122e-05,
+        0.1869635283946991
+      ]
+    },
+    {
+      "name": "edge_zeros_512",
+      "true_class": null,
+      "iq_file": "edge_zeros_512.iq",
+      "image_file": "edge_zeros_512.image.f32",
+      "sample_rate": 8000.0,
+      "num_samples": 512,
+      "label": "bpsk",
+      "confidence": 0.8308119773864746,
+      "probabilities": [
+        0.8308119773864746,
+        0.02640749141573906,
+        0.002436261624097824,
+        0.0003362079442013055,
+        1.856806738942396e-05,
+        0.13998952507972717
+      ]
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+# Dev-time only (training/export). Nothing here ships in the browser app.
+# Versions the export was verified with (Python 3.12).
+torch==2.4.1
+numpy==1.26.4
+onnx==1.23.0
+onnxruntime==1.30.0

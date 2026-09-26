@@ -1,0 +1,11 @@
+{
+  "name": "ps26147-web",
+  "private": true,
+  "description": "JS tooling for the browser app: onnxruntime-web (model inference) and the node-run bridge tests. Source files are .mjs; the Emscripten-built sigbridge.js is CommonJS, so no \"type\" field here.",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "onnxruntime-web": "1.30.0"
+  }
+}

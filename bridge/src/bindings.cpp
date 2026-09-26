@@ -2,6 +2,7 @@
 //   - file bytes in:  ingestFile(bytes, filename, sampleRate) -> signal object
 //   - ML call-out:    classifySpectrogram(spectrogram, rows, cols, callback)
 //                     (drives ml_bridge.cpp: C++ -> Module.sigMlClassifier -> C++)
+//   - both at once:   classifyCapture(bytes, filename, sampleRate, callback)
 //
 // Errors cross the boundary as real JS Error objects (never raw C++ exception
 // pointers): each function catches std::exception, lets its locals unwind,
@@ -116,9 +117,33 @@ void classify_spectrogram(val spectrogram, unsigned int rows, unsigned int cols,
     throw_js_error(error);
 }
 
+// The chain the pipeline will run, entered from JS: bytes -> samples ->
+// spectrogram image (C++) -> JS classifier (onnxruntime-web) -> validated
+// result back in C++ -> callback(error, result).
+void classify_capture(val bytes, std::string filename, double sample_rate, val callback) {
+    std::string error;
+    try {
+        const std::vector<uint8_t> data = bytes_from_js(bytes);
+        const sigcore::SignalData signal = sigcore::ingest_bytes(data.data(), data.size(), filename, sample_rate);
+        sigbridge::classify_signal(
+            signal, [callback](bool ok, const sigbridge::MlResult& result, const std::string& message) {
+                if (ok) {
+                    callback(val::null(), ml_result_to_js(result));
+                } else {
+                    callback(val::global("Error").new_(message), val::null());
+                }
+            });
+        return;
+    } catch (const std::exception& e) {
+        error = e.what();
+    }
+    throw_js_error(error);
+}
+
 }  // namespace
 
 EMSCRIPTEN_BINDINGS(sig_bridge) {
     emscripten::function("ingestFile", &ingest_file);
     emscripten::function("classifySpectrogram", &classify_spectrogram);
+    emscripten::function("classifyCapture", &classify_capture);
 }

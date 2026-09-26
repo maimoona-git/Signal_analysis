@@ -89,6 +89,7 @@ Full details in `BUILDING.md`.
 - Native build: `cmake -B build && cmake --build build` (add
   `-DPython3_EXECUTABLE=<python with pybind11>` for the pybind module)
 - Local serve: `scripts/serve.sh [port]` (plain static server on `dist/`)
+- JS deps: `npm install` (onnxruntime-web); browser check: `scripts/browser-smoke.sh`
 - Run tests: `ctest --test-dir build` (native) or
   `ctest --test-dir build-wasm` (WASM, runs under node; needs emsdk env; also
   runs the JS bridge suite)
@@ -117,3 +118,13 @@ continuation-passing `classify_async` (no Asyncify: it would instrument the
 whole Qt app), validated result, JS errors surfaced as `Error`. Tested by C++
 tests (`test_ingest`, `test_ml_result`) and a node JS suite
 (`tests/bridge/bridge.test.mjs`).
+Phase 5 done: `ml/export_onnx.py` (deterministic, verified vs PyTorch) ->
+`ml/models/modulation_classifier.{onnx,json}` (softmax in the graph);
+`make_spectrogram_image` ported to C++ (`core/src/ml_preprocess.cpp`, checked
+against fixtures made by the ORIGINAL Python in `tests/data/ml/`);
+`web/js/onnx-classifier.mjs` (onnxruntime-web, single-threaded) registered as
+the bridge classifier; `classifyCapture` runs bytes -> C++ -> ONNX -> C++.
+End-to-end matches the original to 1.4e-6 on 11 captures, in node and in real
+headless Chrome (`scripts/browser-smoke.sh`). NOTE: the shipped weights are the
+native prototype's and misclassify qpsk/psk8/qam16/qam64 fixtures; the port
+reproduces that faithfully (see `ml/README.md`).
