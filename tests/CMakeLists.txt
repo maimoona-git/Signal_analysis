@@ -14,3 +14,6 @@ endfunction()
 
 sig_add_test(test_toolchain_smoke core/test_toolchain_smoke.cpp)
 sig_add_test(test_dsp core/test_dsp.cpp)
+sig_add_test(test_demod core/test_demod.cpp)
+sig_add_test(test_interleave core/test_interleave.cpp)
+sig_add_test(test_fec core/test_fec.cpp)

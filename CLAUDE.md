@@ -102,3 +102,10 @@ Phase 2 done: liquid-dsp cross-compiled to WASM (internal FFT, no fftw); all of
 `/core` (including `dsp.cpp`, `demod.cpp`) builds for WASM; `test_dsp` verifies
 FFT/PSD/spectrogram/filter output on both targets. WASM build uses
 `-fexceptions`.
+Phase 3 done: demod (17 linear schemes + FSK), all 5 interleavers, and Viterbi /
+RS / concatenated / LDPC round-trip tests run on both targets
+(`test_demod`, `test_interleave`, `test_fec`), with golden hashes pinning the
+native output so any native/WASM divergence fails the WASM run.
+Known core limitation (inherited, deliberately not fixed): the LDPC
+bit-flipping decoder cannot correct a single-bit error at codeword positions
+7, 9, 13, 15 of a block (see the comment in `tests/core/test_fec.cpp`).
