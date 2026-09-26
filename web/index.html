@@ -5,48 +5,89 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PS 26147 Signal Analysis</title>
   <style>
-    html, body { margin: 0; height: 100%; background: #1e1f22; color: #d8d8d8;
-                 font: 14px system-ui, sans-serif; }
+    html, body { margin: 0; height: 100%; background: #f4f4f4; color: #333; font: 14px system-ui, sans-serif; }
     #screen { position: fixed; inset: 0; display: none; }
-    #status { position: fixed; inset: 0; display: flex; align-items: center;
-              justify-content: center; }
+    #status { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
+              justify-content: center; gap: .5rem; text-align: center; padding: 1rem; }
+    #status.error { color: #b00020; }
+    #status small { color: #777; max-width: 40rem; }
+    #drop { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 10;
+            background: rgba(30, 100, 200, .18); border: 3px dashed #1e64c8; font-size: 1.4rem; color: #1e64c8; pointer-events: none; }
   </style>
 </head>
 <body>
-  <!-- Minimal app shell: hosts the Qt-for-WASM canvas, nothing else.
-       Single-threaded build, so no COOP/COEP headers are required. -->
-  <div id="status">Loading…</div>
+  <!-- App shell: hosts the Qt-for-WASM canvas and supplies the two things the WASM module
+       cannot do itself: (1) the ML model, run with onnxruntime-web, which the C++ pipeline
+       calls out to through Module.sigMlClassifier (see bridge/README.md), and (2) dropping a
+       file onto the page. Everything is served from this origin, so it works offline.
+       Single-threaded build: no COOP/COEP headers needed on the host. -->
+  <div id="status">Loading…<small id="detail"></small></div>
   <div id="screen"></div>
+  <div id="drop">Drop a .wav or .IQ capture to load it</div>
 
   <script src="sigapp.js"></script>
   <script src="qtloader.js"></script>
-  <script>
-    (async () => {
-      const status = document.getElementById('status');
-      const screen = document.getElementById('screen');
-      try {
-        await qtLoad({
-          qt: {
-            entryFunction: window.sigapp_entry,
-            containerElements: [screen],
-            onLoaded: () => {
-              status.style.display = 'none';
-              screen.style.display = 'block';
-            },
-            onExit: (exitData) => {
-              screen.style.display = 'none';
-              status.style.display = 'flex';
-              status.textContent = 'Application exited' +
-                (exitData.code !== undefined ? ` with code ${exitData.code}` : '') +
-                (exitData.text !== undefined ? ` (${exitData.text})` : '');
-            },
-          },
-        });
-      } catch (e) {
-        console.error(e);
-        status.textContent = 'Failed to load: ' + e;
-      }
-    })();
+  <script type="module">
+    import * as ort from './vendor/ort/ort.wasm.min.mjs';
+    import { createOnnxClassifier } from './js/onnx-classifier.mjs';
+
+    const status = document.getElementById('status');
+    const detail = document.getElementById('detail');
+    const screen = document.getElementById('screen');
+    const drop = document.getElementById('drop');
+    const fail = (message, error) => {
+      console.error(message, error);
+      status.className = 'error';
+      status.firstChild.textContent = message;
+      detail.textContent = String(error?.message ?? error ?? '');
+      status.style.display = 'flex';
+      screen.style.display = 'none';
+    };
+
+    // The model loads in the background while Qt starts. If it fails, the app still
+    // opens, and an analysis reports the reason instead of the page looking dead.
+    const classifier = createOnnxClassifier({
+      ort,
+      model: 'models/modulation_classifier.onnx',
+      meta: 'models/modulation_classifier.json',
+      wasmPaths: 'vendor/ort/',
+    });
+    classifier.catch((e) => console.error('ML model failed to load:', e));
+
+    try {
+      const app = await qtLoad({
+        qt: {
+          entryFunction: window.sigapp_entry,
+          containerElements: [screen],
+          onLoaded: () => { status.style.display = 'none'; screen.style.display = 'block'; },
+          onExit: (exit) => fail('The application exited' + (exit.code !== undefined ? ` (code ${exit.code})` : ''), exit.text),
+        },
+        // Read by the C++ pipeline (EM_JS in bridge/src/ml_bridge.cpp): async
+        // (Float32Array spectrogram, rows, cols) => { classes, probabilities }.
+        sigMlClassifier: async (spectrogram, rows, cols) => (await classifier).classify(spectrogram, rows, cols),
+      });
+      window.sigApp = app;   // the Embind hooks (sigAppOpenFile, sigAppState), for scripts and tests
+
+      // Drag-and-drop: the same path as "Open File...", from the page.
+      let depth = 0;
+      addEventListener('dragenter', (e) => { if (e.dataTransfer?.types?.includes('Files')) { depth++; drop.style.display = 'flex'; e.preventDefault(); } });
+      addEventListener('dragover', (e) => e.preventDefault());
+      addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; drop.style.display = 'none'; } });
+      addEventListener('drop', async (e) => {
+        e.preventDefault();
+        depth = 0;
+        drop.style.display = 'none';
+        const file = e.dataTransfer?.files?.[0];
+        if (!file) return;
+        try {
+          app.sigAppOpenFile(new Uint8Array(await file.arrayBuffer()), file.name);
+        } catch (err) {
+          console.error('could not load the dropped file', err);
+        }
+      });
+    } catch (e) {
+      fail('Failed to load the application', e);
+    }
   </script>
 </body>
 </html>

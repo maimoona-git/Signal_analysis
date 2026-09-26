@@ -1,25 +1,24 @@
-// Phase 1 placeholder GUI: proves Qt Widgets compiles to WASM and renders
-// into the browser canvas. Replaced by the real main window in Phase 7.
+// The browser app: Qt Widgets compiled to WebAssembly (see BUILDING.md). The window is
+// the same as the native app's; analyses run in this module, with the ML classification
+// delegated to onnxruntime-web in the page through the bridge.
 
 #include <QApplication>
-#include <QLabel>
-#include <QMainWindow>
-#include <QVBoxLayout>
+
+#include "gui/main_window.hpp"
+#include "gui/wasm_backend.hpp"
+#include "gui/wasm_bindings.hpp"
+#include "gui/wasm_file_picker.hpp"
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
 
-    QMainWindow window;
-    window.setWindowTitle("PS 26147 Signal Analysis");
-
-    auto* central = new QWidget(&window);
-    auto* layout = new QVBoxLayout(central);
-    auto* label = new QLabel("Hello from Qt Widgets on WebAssembly", central);
-    label->setAlignment(Qt::AlignCenter);
-    layout->addWidget(label);
-    window.setCentralWidget(central);
-
-    window.resize(640, 400);
+    sigui::WasmBackend backend;
+    sigui::MainWindow window(&backend);
+    window.setFilePicker(&sigui::pick_file_in_browser);
+    sigui::register_window_for_js(&window);
     window.show();
+
+    // In the browser exec() returns to the event loop immediately without unwinding
+    // this frame, so the stack objects above live as long as the page.
     return app.exec();
 }

@@ -45,3 +45,16 @@ sig_test_uses_data(test_detect)
 sig_add_test(test_pipeline core/test_pipeline.cpp)
 target_link_libraries(test_pipeline PRIVATE sigpipeline)
 sig_test_uses_data(test_pipeline)
+sig_add_test(test_result_text core/test_result_text.cpp)
+target_link_libraries(test_result_text PRIVATE sigpipeline)
+sig_test_uses_data(test_result_text)
+
+# GUI widget tests: only where a desktop Qt is available (configure with
+# -DCMAKE_PREFIX_PATH=<Qt>); they run under the offscreen platform. The browser app
+# itself is tested end to end in Chrome (scripts/browser-gui-test.sh).
+if(TARGET siggui AND NOT EMSCRIPTEN)
+  sig_add_test(test_gui gui/test_gui.cpp)
+  target_link_libraries(test_gui PRIVATE siggui Qt6::Widgets)
+  sig_test_uses_data(test_gui)
+  set_tests_properties(test_gui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()

@@ -19,38 +19,15 @@
 #include <vector>
 
 #include "ingest.hpp"
+#include "js_util.hpp"
 #include "ml_bridge.hpp"
 #include "pipeline_bridge.hpp"
 
 using emscripten::val;
+using sigbridge::bytes_from_js;
+using sigbridge::throw_js_error;
 
 namespace {
-
-[[noreturn]] void throw_js_error(const std::string& message) {
-    val::global("Error").new_(message).throw_();
-}
-
-// Copies an ArrayBuffer / typed array / DataView from JS into WASM memory.
-// One bulk `TypedArray.set` (a memcpy), respecting byteOffset/byteLength so a
-// subarray view of a larger buffer is read correctly.
-std::vector<uint8_t> bytes_from_js(const val& v) {
-    const val array_buffer = val::global("ArrayBuffer");
-    const val uint8 = val::global("Uint8Array");
-    val view = val::undefined();
-    if (v.instanceof(array_buffer)) {
-        view = uint8.new_(v);
-    } else if (array_buffer.call<bool>("isView", v)) {
-        view = uint8.new_(v["buffer"], v["byteOffset"], v["byteLength"]);
-    } else {
-        throw std::runtime_error("expected an ArrayBuffer or typed array of bytes");
-    }
-    const size_t n = view["length"].as<size_t>();
-    std::vector<uint8_t> out(n);
-    if (n > 0) {
-        val(emscripten::typed_memory_view(n, out.data())).call<void>("set", view);
-    }
-    return out;
-}
 
 std::vector<float> floats_from_js(const val& v) {
     if (!v.instanceof(val::global("Float32Array"))) {

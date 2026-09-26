@@ -1,7 +1,7 @@
 // Phase 6: the whole pipeline through the Embind bridge, in JS: file (as a
 // browser File) -> C++ ingest + spectrogram -> ML call-out (the real ONNX model,
 // or a stub) -> C++ demod / de-interleave / FEC decode / correlate -> result.
-// Every one of the 82 scenarios recorded from the ORIGINAL native pipeline
+// Every one of the 84 scenarios recorded from the ORIGINAL native pipeline
 // (tests/data/pipeline/pipeline.rec) must come out the same here.
 
 import assert from 'node:assert/strict';
@@ -81,10 +81,10 @@ describe('runPipeline reproduces the original native pipeline', () => {
   // Fake-classifier scenarios: the recorded label, as a one-class result.
   const stub = (label, confidence) => () => ({ classes: [label], probabilities: [confidence] });
 
-  it('replays all 82 recorded scenarios', async () => {
-    assert.equal(RECORDS.length, 82);
+  it('replays all 84 recorded scenarios', async () => {
+    assert.equal(RECORDS.length, 84);
     const failures = [];
-    let compared = 0, errors = 0, decodes = 0, detections = 0;
+    let compared = 0, errors = 0, tooShort = 0, decodes = 0, detections = 0;
 
     for (const r of RECORDS) {
       const fail = (what, got, want) => failures.push(`${r.name}: ${what} (got ${String(got).slice(0, 60)}, expected ${String(want).slice(0, 60)})`);
@@ -107,7 +107,7 @@ describe('runPipeline reproduces the original native pipeline', () => {
       // recorded success legitimately becomes an error here.
       if (!r.error && numSamples !== null && numSamples < 64) {
         if (!(thrown instanceof Error) || !/at least 64 samples/.test(thrown.message)) fail('short capture should be rejected by ML preprocessing', thrown?.message, 'at least 64 samples');
-        errors++;
+        tooShort++;
         continue;
       }
 
@@ -161,9 +161,11 @@ describe('runPipeline reproduces the original native pipeline', () => {
     }
 
     assert.equal(failures.length, 0, `${failures.length} mismatches:\n  ${failures.slice(0, 8).join('\n  ')}`);
-    assert.equal(compared + errors, 82);
-    assert.ok(compared >= 60 && errors >= 6 && detections >= 20 && decodes >= 30, `coverage: ${compared} compared, ${errors} errors, ${detections} detections, ${decodes} decodes`);
-    console.log(`         ${compared} scenarios matched the original field by field, ${errors} error cases rejected, ${detections} with blind detection, ${decodes} FEC-decoded`);
+    assert.equal(compared + errors + tooShort, 84);
+    assert.equal(errors, 12);      // the cases where the original itself raises
+    assert.equal(tooShort, 5);     // captures of 8, 9, 10, 32, 48 samples: fine for its stub classifier, too short for the ML model
+    assert.ok(compared >= 60 && detections >= 20 && decodes >= 30, `coverage: ${compared} compared, ${detections} detections, ${decodes} decodes`);
+    console.log(`         ${compared} scenarios matched the original field by field; ${errors} original errors rejected; ${tooShort} short captures rejected by the ML step; ${detections} with blind detection, ${decodes} FEC-decoded`);
   });
 
   it('recovers the demo message end to end with the REAL model in the loop', async () => {

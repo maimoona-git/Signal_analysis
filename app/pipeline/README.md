@@ -24,14 +24,19 @@ both given a known `Classification`, which is what the C++ tests use.
 ## How it is validated (not by inspection)
 
 `ml/make_pipeline_fixtures.py` runs the ORIGINAL native code over 600+ cases and
-records every output, including errors, in `tests/data/pipeline/*.rec`:
+records every output, including errors (and, for the GUI, the text the original
+results panel shows), in `tests/data/pipeline/*.rec`:
 
 | Records | C++ test | JS test |
 | --- | --- | --- |
 | 139 correlate | `test_correlate` | |
 | 251 fec + 44 interleave | `test_dispatch` | |
 | 90 detect (full FEC x interleaver grid, noise, degenerate sizes, parameter sweeps) | `test_detect` | |
-| 82 pipeline scenarios (demo captures with the real classifier, all modulations, WAV, noisy, auto-detect for every pairing, 15 error cases) | `test_pipeline` | `tests/bridge/pipeline.test.mjs` (through the real bridge and ONNX model) |
+| 84 pipeline scenarios (demo captures with the real classifier, all modulations, WAV, noisy, auto-detect for every pairing, 12 cases where the original raises) | `test_pipeline` | `tests/bridge/pipeline.test.mjs` (through the real bridge and ONNX model) |
+
+In the browser the ML model needs at least 64 samples (one FFT window), so 5 of the
+original's successful scenarios (captures of 8, 9, 10, 32 and 48 samples, which its stub
+classifier never looked at) are rejected there; `pipeline.test.mjs` expects exactly that.
 
 Bit arrays must match exactly; floating-point values match exactly except the
 spectrogram's dB data (compared by mean, since native fftw and WASM's internal FFT

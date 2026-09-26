@@ -105,8 +105,31 @@ fixtures see `ml/README.md`.
 
 The pipeline port (`app/pipeline/`, see its README) is tested against 600+ cases
 recorded from the original native code (`tests/data/pipeline/`); regenerate them with
-`~/.ml-venv/bin/python ml/make_pipeline_fixtures.py` only if the native behaviour is
+`~/signal-project/signal/.venv/bin/python ml/make_pipeline_fixtures.py --native-repo ~/signal-project/signal`
+(the native venv, since it also records the original PyQt6 panel's text) only if the native behaviour is
 deliberately changed.
+
+## 6. The GUI
+
+The browser app is the Qt Widgets GUI compiled to WASM (`app/gui`, see `app/README.md`):
+
+```bash
+scripts/build-wasm.sh          # builds the app (build-wasm/dist gets sigapp.js/.wasm, qtloader.js, index.html)
+scripts/stage-web.sh           # adds the ML module, the model and the onnxruntime-web runtime (needs `npm install`)
+scripts/serve.sh               # http://localhost:8080/  (any static server works; no special headers)
+scripts/browser-gui-test.sh    # end to end in headless Chrome: clicks, typing, a real file chooser
+```
+
+Drop a `.wav` / `.IQ` file on the page or use "Open File...". The widget tests run on a
+desktop Qt under the offscreen platform; configure the native build with your Qt:
+
+```bash
+cmake -B build -DCMAKE_PREFIX_PATH=$HOME/Qt/6.8.3/macos     # the host Qt installed by setup-toolchain.sh
+cmake --build build && ctest --test-dir build               # adds test_gui
+```
+
+Without a Qt the native build simply skips `/app/gui`. The WASM app is ~14 MB
+(`sigapp.wasm`, Qt Widgets included) plus the ORT runtime's 14 MB.
 
 ## Threading
 

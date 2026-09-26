@@ -4,10 +4,17 @@ app produces for them, so the C++ port of the pipeline orchestration
 by inspection. Covers correlate.py, fec.py, interleave.py, detect.py and
 pipeline.py (io.py and demod.py are exercised through the pipeline scenarios).
 
-Dev-time only; needs the native project (its `app`, `ml` packages, built
-`sigcore`) and torch (the real classifier is run for the demo captures):
+Also records the text the ORIGINAL GUI results panel shows for each successful
+scenario (`panel_text_hex`, `status_hex`), by running the real PyQt6 ResultsPanel
+offscreen, so the C++ text formatting (app/pipeline/src/result_text.cpp) is
+checked byte for byte.
 
-    ~/.ml-venv/bin/python ml/make_pipeline_fixtures.py --native-repo ~/signal-project/signal
+Dev-time only; needs the native project (its `app`, `ml` packages, built
+`sigcore`), torch (the real classifier is run for the demo captures) and PyQt6,
+so run it with the native project's own venv:
+
+    ~/signal-project/signal/.venv/bin/python ml/make_pipeline_fixtures.py \
+        --native-repo ~/signal-project/signal
 
 Output is deterministic (seeded). Record format (read by
 tests/pipeline_fixtures.hpp and tests/bridge/pipeline.test.mjs): records are
@@ -372,6 +379,12 @@ def add_awgn(sig, snr_db, seed):
 
 
 def make_pipeline(out: Path, native: Path) -> int:
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication
+    from app.gui.results_panel import ResultsPanel
+    qt_app = QApplication.instance() or QApplication([])
+    panel = ResultsPanel()
     from app.classify import ModulationClassifier
     from app.demod import modulate
     from app.fec import encode as fec_encode
@@ -419,6 +432,12 @@ def make_pipeline(out: Path, native: Path) -> int:
             rec["b_period"] = ostr(fb.frame_period)
             rec["b_positions"] = ",".join(map(str, fb.header_positions)) or "-"
             rec["b_payloads"] = ",".join(bstr(p) for p in fb.payloads) or "-"
+            # what the original GUI shows (the browser has a filename, not a path)
+            panel.show_result(r)
+            panel_text = panel.toPlainText().replace(str(path), file)
+            status = f"Done. Predicted modulation: {r.predicted_modulation} ({r.predicted_confidence:.0%} confidence)."
+            rec["panel_text_hex"] = panel_text.encode("utf-8").hex()
+            rec["status_hex"] = status.encode("utf-8").hex()
         except Exception as e:  # noqa: BLE001
             rec["error"] = type(e).__name__
             if label_kind != "real":
@@ -492,6 +511,13 @@ def make_pipeline(out: Path, native: Path) -> int:
     chain("chain_noisy_ldpc", "ldpc", "block", {"rows": 24, "cols": 32}, noise=(9.0, 3))
     chain("chain_noisy_viterbi_auto", "viterbi", None, None, noise=(8.0, 4), auto=True)
     chain("chain_given_header", None, None, None, header=payload[:16])
+
+    # --- streams too short to have a frame period (the original prints `None`):
+    # with 8 bits there is one header occurrence and not enough length for autocorrelation
+    # (needs > 8); with 9 bits autocorrelation is attempted but its period range is empty
+    for nbits in (8, 9):
+        write_iq(out / f"few_bits_{nbits}.iq", modulate(rng.integers(0, 2, nbits).astype(np.uint8), "bpsk"))
+        scenario(f"few_bits_{nbits}", f"few_bits_{nbits}.iq", _Fake("bpsk"), "fake", 1000.0)
 
     # --- errors the original raises
     scenario("err_fec_without_msg_len", "chain_ldpc_None.iq", _Fake("bpsk"), "fake", 8000.0, 2, None, None, None, "ldpc", None)

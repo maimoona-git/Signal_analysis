@@ -1,5 +1,5 @@
 // Phase 6: the full pipeline (ingest -> spectrogram -> demod -> de-interleave ->
-// FEC decode -> correlate, with optional blind detection) on 82 scenarios
+// FEC decode -> correlate, with optional blind detection) on 84 scenarios
 // recorded from the ORIGINAL app/pipeline.py (tests/data/pipeline/pipeline.rec):
 // the native app's two demo captures with its real classifier, every modulation,
 // WAV input, noisy channels, explicit and auto-detected parameters for every
@@ -132,7 +132,7 @@ TEST_CASE("pipeline reproduces the original on every recorded scenario") {
         if (got.detection_score) ++detections;
         if (got.decoded_bits) ++decoded;
     }
-    CHECK(recs.size() == 82);
+    CHECK(recs.size() == 84);
     CHECK(errors >= 6);
     CHECK(detections >= 20);
     CHECK(decoded >= 30);

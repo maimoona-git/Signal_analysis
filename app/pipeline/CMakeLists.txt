@@ -11,6 +11,7 @@ add_library(sigpipeline STATIC
   src/correlate.cpp
   src/detect.cpp
   src/pipeline.cpp
+  src/result_text.cpp
 )
 target_include_directories(sigpipeline PUBLIC include)
 target_link_libraries(sigpipeline PUBLIC sigcore_core)
