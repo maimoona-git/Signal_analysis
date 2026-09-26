@@ -1,0 +1,18 @@
+# Build trees (native and WASM)
+build/
+build-*/
+
+# Python (ml/ tooling)
+__pycache__/
+*.py[cod]
+.venv/
+
+# ML artifacts (exported .onnx models are committed only when small)
+ml/checkpoints/
+*.pt
+*.pth
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

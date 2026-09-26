@@ -1,0 +1,99 @@
+# PS 26147 — WASM/Browser Signal Analysis Tool
+
+SIH 2026 prototype for NTRO's PS 26147, re-platformed from the native PyQt6
+desktop app into a browser app: Qt Widgets compiled to WebAssembly, running
+entirely client-side (no server-side processing).
+
+This covers the **application itself** only — the Qt-WASM GUI, DSP/FEC core,
+ML classifier, and pipeline. Marketing/informational pages (landing page,
+`/about`, `/docs`) are out of scope here and will be built separately.
+
+## Tech stack
+
+- **Core DSP + FEC engine**: same C++ source as the native build (`liquid-dsp`
+  based), cross-compiled with Emscripten (`emcc`) to WebAssembly instead of a
+  native `.so`.
+- **GUI**: Qt Widgets in C++, compiled via Qt-for-WebAssembly, rendering to an
+  HTML `<canvas>`. No PyQt6, no pyqtgraph — plotting (waterfall,
+  constellation) is custom-drawn with `QPainter`.
+- **ML parameter classifier**: trained PyTorch weights exported to ONNX
+  (training stays in Python, offline); inference at runtime via
+  `onnxruntime-web` in JavaScript.
+- **C++ ↔ JS bridge**: Embind, used for (a) passing browser-provided file
+  bytes into the WASM module, and (b) the C++ pipeline calling out to the JS
+  ML inference and getting results back. This bridge is a first-class part of
+  the architecture, not an afterthought — treat it as its own deliverable.
+- **No Python at runtime.** Python only exists in `/ml` as dev-time training
+  tooling.
+
+## Architecture (pipeline order)
+
+Browser file input (JS) → bytes into WASM (Embind) → DSP core / spectral
+analysis (C++/WASM) → ML classification (Embind call out to
+`onnxruntime-web`, result back into C++) → Demodulation (C++/WASM) →
+De-interleaving (C++/WASM) → FEC decoding (C++/WASM) → Bitstream correlation
+(C++/WASM) → GUI (Qt Widgets/WASM, renders results at every stage).
+
+## Key architectural decision: threading
+
+Qt-for-WebAssembly is single-threaded by default. True WASM threads need
+`SharedArrayBuffer` plus `Cross-Origin-Opener-Policy`/`Cross-Origin-Embedder-
+Policy` headers, which plain static hosts (GitHub Pages, etc.) don't set by
+default. Default to a **single-threaded build** unless a specific deployment
+target with the right headers is confirmed. If DSP processing needs to stay
+off the UI thread to keep the GUI responsive, use a Web Worker running a
+second WASM instance rather than relying on in-module threads — note this
+explicitly if it becomes necessary rather than silently degrading UI
+responsiveness.
+
+## Repo layout
+
+- `/core` — C++ DSP/FEC engine, shared between native and WASM builds where
+  possible; CMake toolchain file for the Emscripten target
+- `/bridge` — Embind bindings: file-bytes-in, ML-call-out, results-back
+- `/app` — C++ pipeline orchestration + Qt Widgets GUI (WASM target)
+- `/ml` — model definition, training scripts (Python, dev-time only), ONNX
+  export script
+- `/tests` — native/WASM test suite (C++ test framework and/or JS test runner
+  driving the compiled WASM module)
+- `/web` — minimal static shell (`index.html`, loader JS) to host the
+  compiled app; does not include the separate marketing/landing pages
+
+## Working conventions
+
+- **No git commits.** Never run `git add` or `git commit`. At the end of each
+  phase, print the exact `git add <files>` command for the files touched in
+  that phase, plus one suggested one-line commit message. The user commits
+  manually.
+- **One phase at a time.** Follow the phase breakdown in the build prompt.
+  After finishing a phase's deliverables, stop, summarize what was built,
+  print the `git add` line + commit message, and wait for explicit approval
+  before starting the next phase.
+- Reuse existing C++ algorithm source from the native build wherever
+  possible; only the build target, bindings, and GUI are new.
+- Every new module gets at least a minimal test in `/tests`, runnable against
+  the WASM build.
+- Do not touch or scaffold the landing/marketing pages (`/`, `/about`,
+  `/docs`) — that's handled separately.
+
+## Build & run
+
+Full details in `BUILDING.md`.
+
+- Toolchain (once): `scripts/setup-toolchain.sh` (Emscripten 3.1.56 in
+  `~/emsdk`, Qt 6.8.3 `wasm_singlethread` + host Qt in `~/Qt`, via aqtinstall)
+- WASM build: `scripts/build-wasm.sh` (qt-cmake chainloading Emscripten →
+  `build-wasm/`, servable app staged in `build-wasm/dist/`)
+- Native build: `cmake -B build && cmake --build build` (add
+  `-DPython3_EXECUTABLE=<python with pybind11>` for the pybind module)
+- Local serve: `scripts/serve.sh [port]` (plain static server on `dist/`)
+- Run tests: `ctest --test-dir build` (native) or
+  `ctest --test-dir build-wasm` (WASM, runs under node; needs emsdk env)
+- Tests use the dependency-free harness in `tests/harness.hpp`; register new
+  ones with `sig_add_test` in `tests/CMakeLists.txt`.
+
+## Status
+
+Phase 1 done: toolchain, dual native/WASM CMake, Qt hello-world in the
+browser. `/core` source copied from `~/signal-project/signal/core`; the WASM
+build excludes the liquid-dsp sources (`dsp.cpp`, `demod.cpp`) until Phase 2.

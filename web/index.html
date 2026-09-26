@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PS 26147 Signal Analysis</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #1e1f22; color: #d8d8d8;
+                 font: 14px system-ui, sans-serif; }
+    #screen { position: fixed; inset: 0; display: none; }
+    #status { position: fixed; inset: 0; display: flex; align-items: center;
+              justify-content: center; }
+  </style>
+</head>
+<body>
+  <!-- Minimal app shell: hosts the Qt-for-WASM canvas, nothing else.
+       Single-threaded build, so no COOP/COEP headers are required. -->
+  <div id="status">Loading…</div>
+  <div id="screen"></div>
+
+  <script src="sigapp.js"></script>
+  <script src="qtloader.js"></script>
+  <script>
+    (async () => {
+      const status = document.getElementById('status');
+      const screen = document.getElementById('screen');
+      try {
+        await qtLoad({
+          qt: {
+            entryFunction: window.sigapp_entry,
+            containerElements: [screen],
+            onLoaded: () => {
+              status.style.display = 'none';
+              screen.style.display = 'block';
+            },
+            onExit: (exitData) => {
+              screen.style.display = 'none';
+              status.style.display = 'flex';
+              status.textContent = 'Application exited' +
+                (exitData.code !== undefined ? ` with code ${exitData.code}` : '') +
+                (exitData.text !== undefined ? ` (${exitData.text})` : '');
+            },
+          },
+        });
+      } catch (e) {
+        console.error(e);
+        status.textContent = 'Failed to load: ' + e;
+      }
+    })();
+  </script>
+</body>
+</html>
