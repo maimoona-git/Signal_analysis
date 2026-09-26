@@ -56,10 +56,44 @@ bridge.setClassifier(clf.classify);
 const { label, confidence, probabilities } = await bridge.classifyCapture(file, { sampleRate });
 ```
 
+## The pipeline
+
+`bridge.runPipeline(file, options)` (Embind `runPipeline`) runs everything:
+`ingest -> spectrogram -> ML classification -> demod -> de-interleave -> FEC decode ->
+correlate`, i.e. `app/pipeline` with the asynchronous ML step in the middle
+(`sigbridge::run_pipeline_async`). Options (unknown ones are rejected, so typos
+fail loudly; the option names are documented on `SigBridge.runPipeline`):
+
+```js
+const r = await bridge.runPipeline(file, {
+  sampleRate: 8000, samplesPerSymbol: 4,
+  interleaver: { kind: 'block', rows: 8, cols: 16 },
+  fecScheme: 'ldpc', fecMsgLen: 64,        // or autoDetect: true to search for both
+});
+```
+
+Resolves to (all arrays are copies, safe to keep):
+
+```
+{ filePath, sampleRate, numSamples, fileFormat,
+  samples: Float32Array (I,Q interleaved),
+  spectrogram: { data: Float32Array (frames x nfft, dB), frames, nfft, freqs: Float64Array, times: Float64Array },
+  predictedModulation, predictedConfidence,
+  demodulatedBits: Uint8Array, deinterleavedBits: Uint8Array|null, decodedBits: Uint8Array|null,
+  boundaries: { headerPattern: Uint8Array, framePeriod: number|null, headerPositions: number[], payloads: Uint8Array[] },
+  detectedInterleaver: { kind, rows?, cols?, seed?, branches?, delayIncrement? }|null,
+  detectedFec: string|null, detectionScore: number|null }
+```
+
+Rejects with an `Error` (never throws synchronously through the wrapper) for a bad
+file or option, a capture shorter than the ML model's 64-sample FFT window, a
+classifier failure, or any pipeline-stage error. The file format follows the
+native app's rule: `.wav` / `.iq` by extension.
+
 ## Targets
 
 - `sigbridge_portable`: `ml_result` validation, plain C++ (native + WASM tests)
-- `sigbridge_objs`: Embind + call-out (OBJECT library so the registrations are
+- `sigbridge_objs`: Embind + call-outs (`ml_bridge`, `pipeline_bridge`, `bindings`) (OBJECT library so the registrations are
   never dropped by the linker; link it into the Qt app in Phase 7)
 - `sigbridge_module`: standalone `sigbridge.js`/`.wasm` (`createSigBridge()`)
   for the JS tests and any non-Qt host

@@ -1,0 +1,17 @@
+# The pipeline orchestration (C++ port of the native app's pipeline.py, detect.py,
+# fec.py, interleave.py, correlate.py, io.py, demod.py). Plain C++ on top of
+# sigcore_core: no Qt, no Embind, so it builds and is tested natively and under
+# WASM. The Qt GUI (../) and the Embind bridge (/bridge) both link it.
+
+add_library(sigpipeline STATIC
+  src/signal_io.cpp
+  src/demod_dispatch.cpp
+  src/interleave_dispatch.cpp
+  src/fec_dispatch.cpp
+  src/correlate.cpp
+  src/detect.cpp
+  src/pipeline.cpp
+)
+target_include_directories(sigpipeline PUBLIC include)
+target_link_libraries(sigpipeline PUBLIC sigcore_core)
+set_target_properties(sigpipeline PROPERTIES POSITION_INDEPENDENT_CODE ON)

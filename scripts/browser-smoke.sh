@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs web/ml-smoke.html in headless Chrome against a plain static server and
-# fails unless every fixture capture classifies like the original Python.
+# fails unless every fixture capture classifies like the original Python and the
+# full pipeline reproduces the original's results on the two demo captures.
 # Needs: a WASM build (scripts/build-wasm.sh), `npm install`, Google Chrome.
 set -euo pipefail
 
@@ -12,12 +13,13 @@ CHROME="${CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 [ -x "$CHROME" ] || { echo "Chrome not found (set CHROME=...)" >&2; exit 1; }
 
 rm -rf "$STAGE"
-mkdir -p "$STAGE/models" "$STAGE/fixtures"
+mkdir -p "$STAGE/models" "$STAGE/fixtures" "$STAGE/pipeline"
 cp "$REPO_DIR/web/ml-smoke.html" "$STAGE/index.html"
 cp "$REPO_DIR/build-wasm/bridge/sigbridge.js" "$REPO_DIR/build-wasm/bridge/sigbridge.wasm" "$STAGE/"
 cp "$REPO_DIR/bridge/js/sigbridge.mjs" "$REPO_DIR/web/js/onnx-classifier.mjs" "$STAGE/"
 cp "$REPO_DIR"/ml/models/modulation_classifier.{onnx,json} "$STAGE/models/"
 cp "$REPO_DIR"/tests/data/ml/*.iq "$REPO_DIR/tests/data/ml/expected.json" "$STAGE/fixtures/"
+cp "$REPO_DIR"/tests/data/pipeline/{pipeline.rec,bpsk_ldpc_block.iq,fsk_plain.iq} "$STAGE/pipeline/"
 "$REPO_DIR/scripts/vendor-ort.sh" "$STAGE/vendor/ort" >/dev/null
 
 python3 -m http.server "$PORT" -d "$STAGE" >/dev/null 2>&1 &

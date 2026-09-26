@@ -45,8 +45,32 @@
         if (ok) passed++;
         say(`${ok ? 'ok  ' : 'FAIL'} ${c.name.padEnd(18)} ${r.label.padEnd(6)} ${r.confidence.toFixed(3)}  max|diff| vs python ${diff.toExponential(1)}`);
       }
-      const all = passed === expected.cases.length;
-      say(`SMOKE ${all ? 'PASS' : 'FAIL'} ${passed}/${expected.cases.length}`);
+      // The full pipeline, real model in the loop, on the native app's two demo
+      // captures; the expected results are the original Python pipeline's.
+      const recText = await (await fetch('pipeline/pipeline.rec')).text();
+      const recs = []; let cur = {};
+      for (const line of recText.split('\n')) {
+        if (line === '---') { recs.push(cur); cur = {}; } else if (line) { const i = line.indexOf(' '); cur[line.slice(0, i)] = line.slice(i + 1); }
+      }
+      const bitsStr = (u8) => (u8 && u8.length ? Array.from(u8, (b) => (b ? '1' : '0')).join('') : '-');
+      let pipelinePassed = 0, pipelineTotal = 0;
+      for (const name of ['demo_ldpc_block_real', 'demo_fsk_plain_real']) {
+        const r = recs.find((x) => x.name === name);
+        const options = { samplesPerSymbol: Number(r.samples_per_symbol), sampleRate: Number(r.sample_rate) };
+        if (r.interleaver !== 'none') options.interleaver = { kind: r.interleaver, ...Object.fromEntries(r.iparams.split(',').map((kv) => { const [k, v] = kv.split('='); return [k === 'delay_increment' ? 'delayIncrement' : k, Number(v)]; })) };
+        if (r.fec !== 'none') { options.fecScheme = r.fec; options.fecMsgLen = Number(r.msg_len); }
+        const bytes = new Uint8Array(await (await fetch('pipeline/' + r.file)).arrayBuffer());
+        const res = await bridge.runPipeline(new File([bytes], r.file), options);
+        const ok = res.predictedModulation === r.label
+          && bitsStr(res.demodulatedBits) === r.demodulated
+          && (res.decodedBits ? bitsStr(res.decodedBits) : 'none') === r.decoded
+          && res.boundaries.headerPositions.join(',') === (r.b_positions === '-' ? '' : r.b_positions);
+        pipelineTotal++; if (ok) pipelinePassed++;
+        say(`${ok ? 'ok  ' : 'FAIL'} pipeline ${name.padEnd(22)} ${res.predictedModulation.padEnd(6)} demod ${res.demodulatedBits.length} bits, decoded ${res.decodedBits ? res.decodedBits.length + ' bits' : '-'}, frame period ${res.boundaries.framePeriod}`);
+      }
+
+      const all = passed === expected.cases.length && pipelinePassed === pipelineTotal;
+      say(`SMOKE ${all ? 'PASS' : 'FAIL'} ${passed}/${expected.cases.length} classifications, ${pipelinePassed}/${pipelineTotal} pipelines`);
       if (!all) log.className = 'fail';
     } catch (e) {
       log.className = 'fail';

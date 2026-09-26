@@ -30,6 +30,7 @@ if(SIG_BUILD_TESTS)
 endif()
 
 add_subdirectory(core)
+add_subdirectory(app/pipeline)
 add_subdirectory(bridge)
 
 if(SIG_BUILD_APP)

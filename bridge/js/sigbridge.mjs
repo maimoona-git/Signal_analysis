@@ -95,6 +95,36 @@ export class SigBridge {
     });
   }
 
+  /**
+   * The full analysis pipeline: ingest -> spectrogram -> ML classification ->
+   * demod -> de-interleave -> FEC decode -> correlate. Options mirror the native
+   * app's run_pipeline (unknown options are rejected, so typos are caught):
+   *
+   *   filename          decides the format by extension (.wav / .iq), as the native app does
+   *   sampleRate        raw .IQ only (default 1 MHz); WAV carries its own
+   *   samplesPerSymbol  decimation for linear schemes (not FSK), default 1
+   *   demod             { bitsPerSymbol, samplesPerSymbol, bandwidth }, FSK only
+   *   interleaver       { kind: 'block'|'diagonal'|'pseudo_random'|'convolutional',
+   *                       rows, cols | seed | branches, delayIncrement }
+   *   fecScheme         'viterbi' | 'ldpc' | 'rs' | 'concatenated', with fecMsgLen (bits for
+   *                     viterbi/ldpc, bytes for rs/concatenated)
+   *   headerPattern     '0110...' or an array of bits (default: the stream's first 16 bits)
+   *   autoDetect        with no interleaver/fec given, search for them blindly
+   *
+   * Resolves to the result object documented in bridge/README.md.
+   */
+  async runPipeline(source, { filename, ...options } = {}) {
+    const name = filename ?? source?.name ?? '';
+    const bytes = await toBytes(source);
+    return new Promise((resolve, reject) => {
+      try {
+        this.module.runPipeline(bytes, name, options, (err, result) => (err ? reject(err) : resolve(result)));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
   /** Classifications started but not yet completed (should settle back to 0). */
   get pendingClassifications() {
     return this.module.mlPendingCount();

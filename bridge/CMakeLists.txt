@@ -12,9 +12,9 @@ add_library(sigbridge_portable STATIC src/ml_result.cpp)
 target_include_directories(sigbridge_portable PUBLIC include)
 
 if(EMSCRIPTEN)
-  add_library(sigbridge_objs OBJECT src/ml_bridge.cpp src/bindings.cpp)
+  add_library(sigbridge_objs OBJECT src/ml_bridge.cpp src/pipeline_bridge.cpp src/bindings.cpp)
   target_include_directories(sigbridge_objs PUBLIC include)
-  target_link_libraries(sigbridge_objs PUBLIC sigcore_core sigbridge_portable)
+  target_link_libraries(sigbridge_objs PUBLIC sigcore_core sigpipeline sigbridge_portable)
 
   add_executable(sigbridge_module $<TARGET_OBJECTS:sigbridge_objs>)
   set_target_properties(sigbridge_module PROPERTIES OUTPUT_NAME sigbridge)
@@ -34,6 +34,7 @@ if(EMSCRIPTEN)
     add_test(NAME test_bridge_js
       COMMAND ${SIG_NODE} --test ${PROJECT_SOURCE_DIR}/tests/bridge/bridge.test.mjs
               ${PROJECT_SOURCE_DIR}/tests/bridge/onnx.test.mjs
+              ${PROJECT_SOURCE_DIR}/tests/bridge/pipeline.test.mjs
       WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(test_bridge_js PROPERTIES
       ENVIRONMENT "SIGBRIDGE_JS=$<TARGET_FILE:sigbridge_module>")

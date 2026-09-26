@@ -103,6 +103,11 @@ node). The ORT runtime is served from the app's own origin (no CDN, works
 offline) and is 14 MB, by far the largest asset. To regenerate the model or the
 fixtures see `ml/README.md`.
 
+The pipeline port (`app/pipeline/`, see its README) is tested against 600+ cases
+recorded from the original native code (`tests/data/pipeline/`); regenerate them with
+`~/.ml-venv/bin/python ml/make_pipeline_fixtures.py` only if the native behaviour is
+deliberately changed.
+
 ## Threading
 
 The WASM build is **single-threaded** (the `wasm_singlethread` Qt kit, and no
