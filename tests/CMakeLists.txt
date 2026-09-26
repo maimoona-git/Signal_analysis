@@ -13,3 +13,4 @@ function(sig_add_test name)
 endfunction()
 
 sig_add_test(test_toolchain_smoke core/test_toolchain_smoke.cpp)
+sig_add_test(test_dsp core/test_dsp.cpp)

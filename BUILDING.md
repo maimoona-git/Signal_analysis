@@ -34,7 +34,26 @@ Qt account or GUI installer is needed. Override the versions or locations with
 must match the Qt release: see Qt's "Qt for WebAssembly" docs before bumping
 either.
 
-## 2. Native build
+## 2. Cross-compile liquid-dsp for WASM (once)
+
+```bash
+scripts/build-liquid-wasm.sh
+```
+
+Clones liquid-dsp v1.8.2 (the version Homebrew provides for the native build)
+into `~/wasm-deps/liquid-dsp`, builds a static `libliquid.a` with Emscripten and
+installs it to `~/wasm-deps/install` (override with `WASM_DEPS_DIR`; point CMake
+elsewhere with `-DSIG_LIQUID_WASM_PREFIX=...`).
+
+**FFT: fftw is not cross-compiled.** liquid-dsp carries its own FFT (radix-2,
+mixed-radix, Rader and a plain-DFT fallback) and uses it whenever fftw is absent,
+so the WASM build configures with `FIND_FFTW=OFF`. `tests/core/test_dsp.cpp`
+checks that internal FFT against a reference DFT for power-of-two, composite and
+prime sizes, and runs the same assertions on the native (fftw-backed) build.
+SIMD and threads are also off: the SIMD paths are x86/NEON intrinsics and the
+build is single-threaded.
+
+## 3. Native build
 
 ```bash
 cmake -B build -DPython3_EXECUTABLE=/path/to/python-with-pybind11
@@ -45,13 +64,17 @@ ctest --test-dir build --output-on-failure
 `-DPython3_EXECUTABLE` is only needed for the pybind11 module. Without
 pybind11 the module is skipped and the library and tests still build.
 
-## 3. WASM build
+## 4. WASM build
 
 ```bash
 scripts/build-wasm.sh
 ctest --test-dir build-wasm --output-on-failure   # runs the tests under node
 scripts/serve.sh                                  # http://localhost:8080/
 ```
+
+C++ exceptions are enabled for the whole WASM build (`-fexceptions`), because
+`sigcore` reports errors by throwing and Emscripten otherwise compiles `throw`
+into an uncatchable abort.
 
 `build-wasm.sh` sources the emsdk environment and configures with Qt's
 `qt-cmake`, which chainloads the Emscripten toolchain file. The servable app is

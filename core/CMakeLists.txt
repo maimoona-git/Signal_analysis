@@ -26,9 +26,21 @@ target_include_directories(sigcore_core PUBLIC include)
 set_target_properties(sigcore_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(EMSCRIPTEN)
-  # liquid-dsp is not yet cross-compiled for WASM (Phase 2), so the WASM
-  # library currently carries only the dependency-free sources.
-  message(STATUS "sigcore: WASM build excludes liquid-dsp sources (dsp, demod) until Phase 2")
+  # liquid-dsp cross-compiled by scripts/build-liquid-wasm.sh (static, internal
+  # FFT, no fftw/SIMD/threads).
+  set(SIG_LIQUID_WASM_PREFIX "$ENV{HOME}/wasm-deps/install" CACHE PATH
+      "Install prefix of the Emscripten-built liquid-dsp")
+  find_path(LIQUID_INCLUDE_DIR liquid/liquid.h
+    PATHS "${SIG_LIQUID_WASM_PREFIX}/include" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+  find_library(LIQUID_LIBRARY NAMES liquid
+    PATHS "${SIG_LIQUID_WASM_PREFIX}/lib" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+  if(NOT LIQUID_INCLUDE_DIR OR NOT LIQUID_LIBRARY)
+    message(FATAL_ERROR
+      "WASM liquid-dsp not found under ${SIG_LIQUID_WASM_PREFIX}. Run scripts/build-liquid-wasm.sh.")
+  endif()
+  target_sources(sigcore_core PRIVATE ${SIGCORE_LIQUID_SOURCES})
+  target_include_directories(sigcore_core PRIVATE ${LIQUID_INCLUDE_DIR})
+  target_link_libraries(sigcore_core PUBLIC ${LIQUID_LIBRARY})
 else()
   find_path(LIQUID_INCLUDE_DIR liquid/liquid.h
     HINTS /opt/homebrew/opt/liquid-dsp/include /usr/local/opt/liquid-dsp/include

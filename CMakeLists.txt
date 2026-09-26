@@ -13,6 +13,11 @@ endif()
 #   WASM:   scripts/build-wasm.sh   (qt-cmake chainloads the Emscripten toolchain)
 if(EMSCRIPTEN)
   message(STATUS "ps26147: configuring WASM target (Emscripten ${EMSCRIPTEN_VERSION})")
+  # sigcore reports errors by throwing std::runtime_error, and callers (tests,
+  # the Embind bridge) catch them. Emscripten compiles C++ exceptions out by
+  # default, which turns every throw into an uncatchable abort.
+  add_compile_options(-fexceptions)
+  add_link_options(-fexceptions)
 else()
   message(STATUS "ps26147: configuring native target")
 endif()

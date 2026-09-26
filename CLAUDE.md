@@ -81,7 +81,9 @@ responsiveness.
 Full details in `BUILDING.md`.
 
 - Toolchain (once): `scripts/setup-toolchain.sh` (Emscripten 3.1.56 in
-  `~/emsdk`, Qt 6.8.3 `wasm_singlethread` + host Qt in `~/Qt`, via aqtinstall)
+  `~/emsdk`, Qt 6.8.3 `wasm_singlethread` + host Qt in `~/Qt`, via aqtinstall),
+  then `scripts/build-liquid-wasm.sh` (liquid-dsp 1.8.2 → `~/wasm-deps/install`,
+  internal FFT, no fftw)
 - WASM build: `scripts/build-wasm.sh` (qt-cmake chainloading Emscripten →
   `build-wasm/`, servable app staged in `build-wasm/dist/`)
 - Native build: `cmake -B build && cmake --build build` (add
@@ -95,5 +97,8 @@ Full details in `BUILDING.md`.
 ## Status
 
 Phase 1 done: toolchain, dual native/WASM CMake, Qt hello-world in the
-browser. `/core` source copied from `~/signal-project/signal/core`; the WASM
-build excludes the liquid-dsp sources (`dsp.cpp`, `demod.cpp`) until Phase 2.
+browser. `/core` source copied from `~/signal-project/signal/core`.
+Phase 2 done: liquid-dsp cross-compiled to WASM (internal FFT, no fftw); all of
+`/core` (including `dsp.cpp`, `demod.cpp`) builds for WASM; `test_dsp` verifies
+FFT/PSD/spectrogram/filter output on both targets. WASM build uses
+`-fexceptions`.
