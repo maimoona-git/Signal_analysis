@@ -1,0 +1,47 @@
+---
+import "../styles/global.css";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+
+// The nav and footer are always the dark instrument-bezel scheme; `scheme`
+// controls only the page content between them ("dark" for the landing
+// page's hero-led sections, "light" for the long-form reading on /about and
+// /docs -- see tokens.css's comment on why this is a fixed per-surface
+// choice, not a toggle).
+interface Props {
+  title: string;
+  description: string;
+  scheme?: "dark" | "light";
+}
+const { title, description, scheme = "light" } = Astro.props;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <title>{title} — PS 26147</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body>
+    <div data-scheme="dark">
+      <Nav />
+    </div>
+    <main data-scheme={scheme}>
+      <slot />
+    </main>
+    <div data-scheme="dark">
+      <Footer />
+    </div>
+  </body>
+</html>
+
+<style>
+  main {
+    display: block;
+    background: var(--surface);
+    color: var(--text);
+    min-height: 60vh;
+  }
+</style>

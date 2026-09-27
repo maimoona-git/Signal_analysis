@@ -1,0 +1,110 @@
+---
+// Persistent instrument bezel: always the dark scheme, regardless of the page
+// content underneath it (BaseLayout wraps this in its own data-scheme="dark"
+// block). Active page is marked with a Status Readout dot (DESIGN.md #4)
+// rather than a background highlight -- one motif reused with an actual
+// meaning (which page is "live"), not a second, unrelated nav-active style.
+const links = [
+  { href: "/", label: "Home" },
+  { href: "/about", label: "About" },
+  { href: "/docs", label: "Docs" },
+];
+const path = Astro.url.pathname;
+const isActive = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
+---
+
+<header class="nav">
+  <div class="nav__inner">
+    <a href="/" class="nav__wordmark">PS 26147</a>
+    <nav class="nav__links" aria-label="Primary">
+      {
+        links.map((link) => (
+          <a href={link.href} class="nav__link" aria-current={isActive(link.href) ? "page" : undefined}>
+            {isActive(link.href) && <span class="nav__dot" aria-hidden="true" />}
+            {link.label}
+          </a>
+        ))
+      }
+      <a href="/web/" class="nav__launch">
+        Launch app
+      </a>
+    </nav>
+  </div>
+</header>
+
+<style>
+  .nav {
+    background: var(--surface);
+    color: var(--text);
+    border-bottom: var(--panel-border-width) solid var(--line);
+  }
+
+  .nav__inner {
+    max-width: var(--content-max-width);
+    margin: 0 auto;
+    padding: var(--space-4) var(--space-5);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-5);
+  }
+
+  .nav__wordmark {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: var(--text-lg);
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    color: var(--text);
+  }
+
+  .nav__links {
+    display: flex;
+    align-items: center;
+    gap: var(--space-5);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+  }
+
+  .nav__link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    text-decoration: none;
+    color: var(--muted);
+  }
+
+  .nav__link[aria-current="page"] {
+    color: var(--text);
+  }
+
+  .nav__dot {
+    width: 0.4em;
+    height: 0.4em;
+    border-radius: 50%;
+    background: var(--phosphor);
+  }
+
+  .nav__launch {
+    padding: var(--space-2) var(--space-4);
+    border: var(--panel-border-width) solid var(--phosphor-dim);
+    border-radius: var(--panel-radius);
+    color: var(--phosphor);
+    text-decoration: none;
+  }
+
+  .nav__launch:hover {
+    background: var(--phosphor-dim);
+    color: var(--ink-950);
+  }
+
+  @media (max-width: 32rem) {
+    .nav__inner {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .nav__links {
+      flex-wrap: wrap;
+    }
+  }
+</style>

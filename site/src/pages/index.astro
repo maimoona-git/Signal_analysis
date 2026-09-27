@@ -1,0 +1,309 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Panel from "../components/Panel.astro";
+import Badge from "../components/Badge.astro";
+import BlinkCursor from "../components/BlinkCursor.astro";
+
+// A capture actually going through this pipeline, phrased as its own log --
+// content-accurate stage names/values (matching app/pipeline's real output),
+// not placeholder lorem ipsum. See the <script> below for how it's revealed.
+const log = [
+  "load capture.iq  524288 samples",
+  "dsp: fft 256pt, spectrogram (2048, 256)",
+  "ml: predicted bpsk, 98% confidence",
+  "demod: bpsk -> 8192 bits",
+  "fec: ldpc decoded, 99.7% re-encode agreement",
+  'message: "SIH2026!"',
+];
+
+const stages = [
+  { title: "Ingestion", detail: "A .wav or .IQ file, read as bytes -- nothing leaves the browser." },
+  { title: "DSP / spectral analysis", detail: "FFT and spectrogram, computed in WebAssembly." },
+  { title: "ML classification", detail: "A small ONNX model guesses the modulation scheme, in JavaScript." },
+  { title: "Demodulation", detail: "17 linear schemes plus FSK, back in the WASM core." },
+  { title: "De-interleaving", detail: "Block, diagonal, convolutional or pseudo-random, undone." },
+  { title: "FEC decoding", detail: "Viterbi, LDPC, Reed–Solomon, or both concatenated." },
+  { title: "Bitstream correlation", detail: "Repeating headers and frame boundaries, found in the decoded bits." },
+  { title: "GUI", detail: "Qt Widgets, compiled to WASM, rendering every stage above." },
+];
+
+const stack = ["C++ / liquid-dsp", "Qt for WebAssembly", "ONNX Runtime Web", "Embind", "Emscripten"];
+---
+
+<BaseLayout
+  title="Home"
+  description="PS 26147: a signal analysis tool that runs entirely in your browser, with no server."
+  scheme="dark"
+>
+  <section class="hero">
+    <div class="band__inner hero__inner">
+      <div class="hero__copy">
+        <h1>Signal analysis that never leaves your browser<BlinkCursor /></h1>
+        <p class="hero__lede">
+          Demodulation, FEC decoding, and an ML modulation classifier, compiled to WebAssembly and
+          run entirely client-side. No upload, no server, no account.
+        </p>
+        <div class="hero__actions">
+          <a class="button button--primary" href="/web/">Launch app</a>
+          <a class="button button--ghost" href="/docs">Read the docs</a>
+        </div>
+      </div>
+      <Panel label="Session log" class="hero__log-panel">
+        <ol class="log" id="session-log" aria-label="Example pipeline run">
+          {log.map((line) => <li class="log__line">{line}</li>)}
+        </ol>
+      </Panel>
+    </div>
+  </section>
+
+  <section class="band" data-scheme="light">
+    <div class="band__inner">
+      <h2>What it does</h2>
+      <p>
+        PS 26147 takes a captured radio signal and works out what's in it: which modulation scheme,
+        whether it's interleaved, whether it carries forward error correction, and what the decoded
+        message actually says. It's a re-platformed version of a native desktop tool -- the same
+        C++ DSP and FEC core, now compiled to WebAssembly and running inside a Qt-for-WebAssembly
+        GUI, instead of installed software.
+      </p>
+      <p>
+        Because it's client-side, a capture never has to leave your machine to be analyzed --
+        there's no server in this pipeline at all.
+      </p>
+    </div>
+  </section>
+
+  <section class="band" data-scheme="dark">
+    <div class="band__inner">
+      <h2>How a capture moves through the pipeline</h2>
+      <Panel label="Pipeline">
+        <ol class="stages">
+          {
+            stages.map((stage, i) => (
+              <li class="stages__step">
+                <span class="stages__marker" aria-hidden="true">
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+                <span class="stages__body">
+                  <span class="stages__title">{stage.title}</span>
+                  <span class="stages__detail">{stage.detail}</span>
+                </span>
+              </li>
+            ))
+          }
+        </ol>
+      </Panel>
+    </div>
+  </section>
+
+  <section class="band" data-scheme="light">
+    <div class="band__inner">
+      <h2>Built with</h2>
+      <p>No Python at runtime -- it only exists in <code>/ml</code> as offline training tooling.</p>
+      <p class="stack">
+        {stack.map((item) => <Badge variant="neutral">{item}</Badge>)}
+      </p>
+    </div>
+  </section>
+
+  <section class="band band--cta" data-scheme="dark">
+    <div class="band__inner band__inner--center">
+      <h2>Open a capture and see what's in it</h2>
+      <a class="button button--primary" href="/web/">Launch app</a>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .band {
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  .band__inner {
+    max-width: var(--content-max-width);
+    margin: 0 auto;
+    padding: var(--space-8) var(--space-5);
+  }
+
+  .band__inner--center {
+    text-align: center;
+  }
+
+  .band--cta .button {
+    margin-top: var(--space-2);
+  }
+
+  .hero {
+    background: var(--surface);
+    color: var(--text);
+    border-bottom: var(--panel-border-width) solid var(--line);
+  }
+
+  .hero__inner {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: var(--space-7);
+    align-items: center;
+  }
+
+  .hero h1 {
+    font-size: var(--text-4xl);
+    max-width: 14ch;
+  }
+
+  .hero__lede {
+    font-size: var(--text-lg);
+    color: var(--muted);
+    max-width: 34ch;
+  }
+
+  .hero__actions {
+    display: flex;
+    gap: var(--space-4);
+    margin-top: var(--space-6);
+  }
+
+  .button {
+    display: inline-block;
+    padding: var(--space-3) var(--space-5);
+    border: var(--panel-border-width) solid var(--phosphor-dim);
+    border-radius: var(--panel-radius);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  .button--primary {
+    background: var(--phosphor-dim);
+    color: var(--ink-950);
+  }
+
+  .button--primary:hover {
+    background: var(--phosphor);
+  }
+
+  .button--ghost {
+    color: var(--phosphor);
+  }
+
+  .button--ghost:hover {
+    background: var(--surface-raised);
+  }
+
+  .log {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .log__line {
+    color: var(--phosphor);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .log__line::before {
+    content: "$ ";
+    color: var(--muted);
+  }
+
+  .stages {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    position: relative;
+  }
+
+  .stages__step {
+    display: grid;
+    grid-template-columns: 2.5rem 1fr;
+    gap: var(--space-4);
+    padding: var(--space-3) 0;
+    position: relative;
+  }
+
+  .stages__step:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    left: 1.1rem;
+    top: 2.3rem;
+    bottom: -0.7rem;
+    width: 1px;
+    background: var(--line);
+  }
+
+  .stages__marker {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--phosphor);
+    line-height: 1.4;
+  }
+
+  .stages__body {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .stages__title {
+    font-family: var(--font-mono);
+    font-weight: 600;
+  }
+
+  .stages__detail {
+    color: var(--muted);
+    font-size: var(--text-sm);
+  }
+
+  .stack {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+
+  @media (max-width: 48rem) {
+    .hero__inner {
+      grid-template-columns: 1fr;
+    }
+    .hero h1 {
+      max-width: none;
+    }
+  }
+</style>
+
+<script>
+  // A single orchestrated reveal on load: the session log types itself in,
+  // like a real terminal session, rather than appearing all at once or via a
+  // generic fade/slide entrance. Respects prefers-reduced-motion by skipping
+  // straight to the finished text (also the no-JS fallback, since the lines
+  // are real text content, not injected by this script).
+  const list = document.getElementById("session-log");
+  if (list && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    const lines = Array.from(list.children) as HTMLElement[];
+    const texts = lines.map((line) => line.textContent ?? "");
+    lines.forEach((line) => (line.textContent = ""));
+
+    let lineIndex = 0;
+    let charIndex = 0;
+    const typeNext = () => {
+      if (lineIndex >= lines.length) return;
+      const text = texts[lineIndex];
+      charIndex += 1;
+      lines[lineIndex].textContent = text.slice(0, charIndex);
+      if (charIndex >= text.length) {
+        lineIndex += 1;
+        charIndex = 0;
+        setTimeout(typeNext, 220);
+      } else {
+        setTimeout(typeNext, 14);
+      }
+    };
+    typeNext();
+  }
+</script>

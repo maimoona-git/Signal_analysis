@@ -1,0 +1,100 @@
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-sans/400-italic.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/ibm-plex-mono/600.css";
+@import "./tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  line-height: 1.15;
+  margin: 0 0 var(--space-4);
+  letter-spacing: -0.01em;
+}
+
+h1 {
+  font-size: var(--text-4xl);
+}
+h2 {
+  font-size: var(--text-2xl);
+}
+h3 {
+  font-size: var(--text-xl);
+}
+h4 {
+  font-size: var(--text-lg);
+}
+
+p {
+  margin: 0 0 var(--space-4);
+  max-width: var(--prose-max-width);
+}
+
+a {
+  color: inherit;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+/* One visible focus style, everywhere, rather than relying on each component
+   to define its own -- an outline that survives on both schemes. */
+a:focus-visible,
+button:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--phosphor);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Blink Cursor motif (DESIGN.md): a single trailing block cursor, used
+   sparingly -- see components/BlinkCursor.astro. Defined once, globally, so
+   every use shares the exact same rhythm. */
+@keyframes blink-cursor {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}

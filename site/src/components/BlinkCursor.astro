@@ -1,0 +1,16 @@
+---
+// Blink Cursor motif (DESIGN.md #5): a one-off trailing terminal cursor.
+// Deliberately not a page-wide gimmick -- use it at most once per page (a
+// hero headline's last word, a "last updated" line), never repeated in a
+// list or attached to every heading.
+---
+
+<span class="blink-cursor" aria-hidden="true">▍</span>
+
+<style>
+  .blink-cursor {
+    display: inline-block;
+    color: var(--phosphor);
+    animation: blink-cursor 1s step-end infinite;
+  }
+</style>

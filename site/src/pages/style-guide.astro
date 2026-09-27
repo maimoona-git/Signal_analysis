@@ -1,0 +1,79 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Panel from "../components/Panel.astro";
+import Badge from "../components/Badge.astro";
+import BlinkCursor from "../components/BlinkCursor.astro";
+// Phase 1 deliverable: the design-system components, together, for review --
+// not a real page (nothing here links from the nav). Real pages start in
+// Phase 2.
+---
+
+<BaseLayout
+  title="Style guide"
+  description="Design system components for PS 26147 (internal review page)."
+  scheme="light"
+>
+  <div class="wrap">
+    <h1>Design system<BlinkCursor /></h1>
+    <p>Component building blocks from <code>/site/DESIGN.md</code>, for review before Phase 2's real pages.</p>
+
+    <h2>Type scale</h2>
+    <p style="font-family: var(--font-mono); font-size: var(--text-xs)">text-xs — IBM Plex Mono</p>
+    <p style="font-size: var(--text-sm)">text-sm — IBM Plex Sans</p>
+    <p style="font-size: var(--text-base)">text-base — the body copy size used throughout /about and /docs.</p>
+    <p style="font-size: var(--text-lg)">text-lg</p>
+    <h3>Heading 3 — text-xl, IBM Plex Mono</h3>
+    <h2>Heading 2 — text-2xl</h2>
+
+    <h2>Panel</h2>
+    <Panel label="FEC decoder">
+      <p>
+        The pipeline tries Viterbi, LDPC, Reed–Solomon and concatenated decoding, each with its own
+        re-encode-and-compare confidence score.
+      </p>
+    </Panel>
+
+    <h2>Badge</h2>
+    <p>
+      <Badge variant="active">BPSK</Badge>
+      <Badge variant="active">LDPC</Badge>
+      <Badge variant="neutral">8000 Hz</Badge>
+      <Badge variant="attention">Auto-detect uncertain</Badge>
+    </p>
+
+    <h2>Dark scheme</h2>
+    <div data-scheme="dark" class="dark-demo">
+      <Panel label="Waterfall">
+        <p>The same components on the dark instrument scheme, used for the landing page's hero sections.</p>
+      </Panel>
+      <p>
+        <Badge variant="active">Signal locked</Badge>
+        <Badge variant="neutral">512 samples</Badge>
+      </p>
+    </div>
+
+    <h2>Rule</h2>
+    <div class="rule"></div>
+  </div>
+</BaseLayout>
+
+<style>
+  .wrap {
+    max-width: var(--content-max-width);
+    margin: 0 auto;
+    padding: var(--space-8) var(--space-5) var(--space-8);
+  }
+
+  .dark-demo {
+    background: var(--surface);
+    color: var(--text);
+    padding: var(--space-6);
+    margin: var(--space-5) 0;
+  }
+
+  .rule {
+    height: 2px;
+    background: var(--phosphor-dim);
+    margin: var(--space-5) 0;
+  }
+</style>

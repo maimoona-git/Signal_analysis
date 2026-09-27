@@ -1,0 +1,68 @@
+---
+// A plain single-color top rule (the phosphor accent) marks the footer off
+// from the page above it -- no gradient, no second/third color.
+---
+
+<footer class="footer">
+  <div class="footer__inner">
+    <p class="footer__line">PS 26147 — signal analysis, entirely in your browser.</p>
+    <nav class="footer__links" aria-label="Footer">
+      <a href="/">Home</a>
+      <a href="/about">About</a>
+      <a href="/docs">Docs</a>
+      <a href="/web/">Launch app</a>
+    </nav>
+  </div>
+</footer>
+
+<style>
+  .footer {
+    position: relative;
+    padding-top: 3px;
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  .footer::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--phosphor-dim);
+  }
+
+  .footer__inner {
+    max-width: var(--content-max-width);
+    margin: 0 auto;
+    padding: var(--space-5);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--muted);
+  }
+
+  .footer__line {
+    margin: 0;
+    max-width: none;
+  }
+
+  .footer__links {
+    display: flex;
+    gap: var(--space-4);
+  }
+
+  .footer__links a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  .footer__links a:hover {
+    color: var(--text);
+  }
+</style>
