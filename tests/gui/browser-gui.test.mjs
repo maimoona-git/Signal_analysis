@@ -105,7 +105,7 @@ describe('the Qt-WASM app in real Chrome', () => {
       server = await serve(dist);
       origin = `http://127.0.0.1:${server.address().port}/`;
     }
-    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-gpu'], defaultViewport: { width: 1200, height: 800 } });
+    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-gpu'], defaultViewport: { width: 1400, height: 800 } });
     page = await browser.newPage();
     page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) consoleErrors.push(m.text()); });
     page.on('request', (r) => { if (!r.url().startsWith(origin) && !r.url().startsWith('data:') && !r.url().startsWith('blob:')) externalRequests.push(r.url()); });
@@ -334,7 +334,7 @@ describe('served from a sub-path, as a GitHub Pages project site or any reverse 
   const failures = [];
   before(async () => {
     server = await serve(dist, '/apps/sig/');
-    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-gpu'], defaultViewport: { width: 1200, height: 800 } });
+    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-gpu'], defaultViewport: { width: 1400, height: 800 } });
     page = await browser.newPage();
     page.on('response', (r) => { if (r.status() >= 400 && !/favicon\.ico$/.test(r.url())) failures.push(`${r.status()} ${r.url()}`); });
     await page.goto(`http://127.0.0.1:${server.address().port}/apps/sig/`);
@@ -366,7 +366,7 @@ describe('a capture too large to hold', { skip: process.env.SIG_TEST_HUGE ? fals
   let server, browser, page;
   before(async () => {
     server = await serve(dist);
-    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-gpu'], defaultViewport: { width: 1200, height: 800 }, protocolTimeout: 600000 });
+    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-gpu'], defaultViewport: { width: 1400, height: 800 }, protocolTimeout: 600000 });
     page = await browser.newPage();
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.waitForFunction(() => window.sigApp && window.sigApp.sigAppState().window, { timeout: 90000 });

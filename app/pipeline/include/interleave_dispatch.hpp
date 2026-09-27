@@ -7,6 +7,7 @@
 #include <string>
 
 #include "bits.hpp"
+#include "soft_demod.hpp"  // sigcore::LLRBuffer
 
 namespace sigapp {
 
@@ -37,5 +38,11 @@ struct InterleaverSpec {
 // sizes.
 Bits interleave(const Bits& bits, const InterleaverSpec& spec);
 Bits deinterleave(const Bits& bits, const InterleaverSpec& spec);
+
+// Feature 3 (SIH26147 extra feature, soft-decision decoding): the same dispatch, over
+// LLRs instead of hard bits -- every interleaver here is a fixed gather/permutation, so
+// this moves confidences through exactly the same positions the bit version would.
+sigcore::LLRBuffer interleave(const sigcore::LLRBuffer& llrs, const InterleaverSpec& spec);
+sigcore::LLRBuffer deinterleave(const sigcore::LLRBuffer& llrs, const InterleaverSpec& spec);
 
 }  // namespace sigapp

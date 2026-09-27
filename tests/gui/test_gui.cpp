@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "main_window.hpp"
+#include "frame_raster_widget.hpp"
 #include "result_text.hpp"
 #include "../harness.hpp"
 #include "../record_file.hpp"
@@ -77,14 +78,21 @@ public:
     std::vector<AnalysisRequest> requests;
     AnalysisCallback held;
     std::shared_ptr<const sigapp::PipelineResult> last_result;
+    // Applied on top of whatever the window sent, for tests that need a known FEC
+    // scheme wired in but have no GUI control for it yet (the toolbar only has
+    // auto-detect, not a manual FEC/interleaver picker).
+    std::optional<std::string> force_fec_scheme;
+    std::optional<size_t> force_fec_msg_len;
 
     void run(const AnalysisRequest& request, AnalysisCallback done) override {
         requests.push_back(request);
         if (mode == Mode::ThrowNow) throw std::runtime_error("unsupported file extension: '.bin'");
         if (mode == Mode::FailNow) { done(false, nullptr, QStringLiteral("model unavailable")); return; }
+        auto options = request.options;
+        if (force_fec_scheme) { options.fec_scheme = force_fec_scheme; options.fec_msg_len = force_fec_msg_len; }
         const auto* data = reinterpret_cast<const uint8_t*>(request.bytes.constData());
         last_result = std::make_shared<const sigapp::PipelineResult>(sigapp::run_pipeline(
-            data, static_cast<size_t>(request.bytes.size()), request.filename.toStdString(), request.options, classification));
+            data, static_cast<size_t>(request.bytes.size()), request.filename.toStdString(), options, classification));
         if (mode == Mode::Hold) { held = std::move(done); return; }
         done(true, last_result, QString());
     }
@@ -298,6 +306,59 @@ TEST_CASE("constellation: empty, single-point and identical-point data do not br
     CHECK(c.points().empty());
 }
 
+// --- frame raster (Feature 4) ------------------------------------------------------
+
+TEST_CASE("frame raster: colours the label strip and draws bits with frame index increasing upward") {
+    sigapp::FrameRaster r;
+    r.detected = true;
+    r.frame_length = 4;
+    r.num_frames = 3;
+    r.matrix = {1, 0, 1, 0,   // frame 0
+               0, 1, 0, 1,   // frame 1
+               1, 1, 0, 0};  // frame 2
+    r.columns.resize(4);
+    r.columns[0].label = sigapp::ColumnLabel::Constant;
+    r.columns[1].label = sigapp::ColumnLabel::CounterLike;
+    r.columns[2].label = sigapp::ColumnLabel::Payload;
+    r.columns[3].label = sigapp::ColumnLabel::Payload;
+
+    FrameRasterWidget w;
+    w.setData(r);
+    CHECK(w.hasData());
+    CHECK(w.image().width() == 4 && w.image().height() == 4);  // +1 row for the label strip
+
+    // The label strip (image row 0).
+    CHECK(w.image().pixel(0, 0) != w.image().pixel(2, 0));  // constant differs from payload
+    CHECK(w.image().pixel(1, 0) != w.image().pixel(2, 0));  // counter-like differs from payload
+    CHECK(w.image().pixel(2, 0) == w.image().pixel(3, 0));  // both payload columns match
+
+    // Frame index increases upward: frame 2 is nearest the label strip, frame 0 furthest.
+    auto white = qRgb(255, 255, 255);
+    auto black = qRgb(0, 0, 0);
+    CHECK(w.image().pixel(0, 1) == white && w.image().pixel(1, 1) == white);  // frame 2 = 1,1,0,0
+    CHECK(w.image().pixel(2, 1) == black && w.image().pixel(3, 1) == black);
+    CHECK(w.image().pixel(0, 2) == black && w.image().pixel(1, 2) == white);  // frame 1 = 0,1,0,1
+    CHECK(w.image().pixel(0, 3) == white && w.image().pixel(1, 3) == black);  // frame 0 = 1,0,1,0
+
+    const QImage rendered = render(w, 400, 300);
+    const QRectF plot = w.plotRect();
+    CHECK(pixel_at(rendered, QPointF(plot.left() + 2, plot.top() + 2)) != qRgb(255, 255, 255));  // the strip is drawn, not white background
+
+    w.clearData();
+    CHECK(!w.hasData());
+    CHECK(w.image().isNull());
+}
+
+TEST_CASE("frame raster: no detection shows an empty picture, not a guess") {
+    FrameRasterWidget w;
+    sigapp::FrameRaster none;  // detected = false by default
+    w.setData(none);
+    CHECK(!w.hasData());
+    CHECK(w.image().isNull());
+    const QImage rendered = render(w, 300, 200);
+    CHECK(pixel_at(rendered, w.plotRect().center()) == qRgb(255, 255, 255));
+}
+
 // --- results panel ----------------------------------------------------------------
 
 TEST_CASE("results panel is read-only and shows results, errors and nothing") {
@@ -456,6 +517,67 @@ TEST_CASE("main window: a finished analysis fills the plots, the panel and the s
     CHECK(win.resultsPanel()->toPlainText().toStdString() == sigapp::format_result_text(r));
     CHECK(win.statusBar()->currentMessage().toStdString() == sigapp::format_done_status(r));
     CHECK(win.runAction()->isEnabled());
+}
+
+TEST_CASE("main window: the soft-decoding toggle is sent to the backend and shown in the panel") {
+    StubBackend backend;
+    MainWindow win(&backend);
+    win.loadFile("bpsk_ldpc_block.iq", demo_bytes("bpsk_ldpc_block.iq"));
+    CHECK(!win.softDecodingCheckBox()->isChecked());   // off by default
+    win.sampleRateEdit()->setText("8000");
+    win.samplesPerSymbolSpinBox()->setValue(4);
+    backend.force_fec_scheme = "ldpc";
+    backend.force_fec_msg_len = 64;
+    win.runAnalysis();
+    pump();
+    CHECK(!backend.requests.back().options.soft_decoding);
+    CHECK(win.resultsPanel()->toPlainText().contains("Decoding mode:        hard"));
+
+    win.softDecodingCheckBox()->setChecked(true);
+    win.runAnalysis();
+    pump();
+    CHECK(backend.requests.back().options.soft_decoding);
+    CHECK(win.resultsPanel()->toPlainText().contains("Decoding mode:        soft (LLR)"));
+    CHECK(win.resultsPanel()->toPlainText().contains("Re-encode agreement:"));
+}
+
+TEST_CASE("main window: the frame raster panel is wired to a finished analysis") {
+    // fsk_plain.iq is a single short message with nothing to repeat: the raster panel
+    // must honestly show "not detected", not a guess -- confirming the wiring reaches
+    // both outcomes, not just the populated one.
+    StubBackend backend;
+    backend.classification = {"fsk", 1.0};  // fsk_plain.iq is FSK; StubBackend defaults to bpsk
+    MainWindow win(&backend);
+    win.loadFile("fsk_plain.iq", demo_bytes("fsk_plain.iq"));
+    CHECK(!win.frameRaster()->hasData());  // cleared on load, before any analysis
+    win.sampleRateEdit()->setText("8000");
+    win.runAnalysis();
+    pump();
+    CHECK(!win.frameRaster()->hasData());
+    CHECK(win.frameRasterText()->toPlainText().toStdString() == sigapp::format_raster_text(backend.last_result->raster));
+    CHECK(win.frameRasterText()->toPlainText().contains("No repeating frame structure detected"));
+
+    // A capture that DOES repeat: the panel picks it up.
+    const sigapp::Bits header = {1, 0, 1, 1, 0, 0, 1, 0};
+    Rng rng(60);
+    sigapp::Bits stream;
+    for (unsigned i = 0; i < 20; ++i) {
+        stream.insert(stream.end(), header.begin(), header.end());
+        for (unsigned b = 0; b < 24; ++b) stream.push_back(static_cast<uint8_t>((rng.next() >> 33) & 1));
+    }
+    const auto samples = sigapp::modulate(stream, "bpsk");
+    QByteArray raw(reinterpret_cast<const char*>(samples.data()), static_cast<qsizetype>(samples.size() * sizeof(samples[0])));
+    win.loadFile("raster.iq", raw);
+    win.sampleRateEdit()->setText("8000");
+    backend.classification = {"bpsk", 1.0};
+    win.runAnalysis();
+    pump();
+
+    CHECK(win.frameRaster()->hasData());
+    CHECK(win.frameRaster()->raster().frame_length == 32);
+    CHECK(win.frameRaster()->image().width() == 32);
+    CHECK(win.frameRasterText()->toPlainText().contains("Frame length:         32 bits"));
+    CHECK(win.frameRasterText()->toPlainText().contains("Sync word:            10110010"));
 }
 
 TEST_CASE("main window: the panel shows exactly what the ORIGINAL GUI showed for the same run") {

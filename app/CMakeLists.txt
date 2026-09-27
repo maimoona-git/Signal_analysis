@@ -7,6 +7,7 @@ qt_add_library(siggui STATIC
   gui/plot_axes.cpp
   gui/waterfall_widget.cpp
   gui/constellation_widget.cpp
+  gui/frame_raster_widget.cpp
   gui/results_panel.cpp
   gui/main_window.cpp
 )

@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include "fec.hpp"
+#include "viterbi.hpp"
 
 namespace sigapp {
 
@@ -55,6 +56,21 @@ Bits fec_decode(const Bits& bits, const std::string& scheme, size_t msg_len) {
     if (s == "ldpc") return sigcore::ldpc_decode(bits, msg_len);
     if (s == "rs") return bytes_to_bits(sigcore::rs_decode(bits_to_bytes(bits), msg_len));
     if (s == "concatenated") return bytes_to_bits(sigcore::concatenated_decode(bits, msg_len));
+    unknown(scheme);
+}
+
+bool fec_supports_soft_decode(const std::string& scheme) {
+    const std::string s = lower(scheme);
+    return s == "viterbi" || s == "ldpc";
+}
+
+Bits fec_decode_soft(const sigcore::LLRBuffer& llrs, const std::string& scheme, size_t msg_len) {
+    const std::string s = lower(scheme);
+    if (s == "viterbi") return sigcore::viterbi_decode_soft(llrs, msg_len);
+    if (s == "ldpc") return sigcore::ldpc_decode_soft(llrs, msg_len);
+    if (s == "rs" || s == "concatenated") {
+        throw std::invalid_argument("fec_decode_soft: '" + scheme + "' has no soft decoder (RS decodes on hard symbols)");
+    }
     unknown(scheme);
 }
 

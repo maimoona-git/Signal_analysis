@@ -67,10 +67,10 @@ TEST_CASE("interleavers reject invalid input") {
     CHECK_THROWS(block_deinterleave(random_bits(10), 4, 4));
     CHECK_THROWS(block_interleave(random_bits(0), 0, 4));
     CHECK_THROWS(diagonal_interleave(random_bits(10), 4, 4));
-    CHECK_THROWS(pseudo_random_interleave({}, 1));
-    CHECK_THROWS(pseudo_random_deinterleave({}, 1));
+    CHECK_THROWS(pseudo_random_interleave(std::vector<uint8_t>{}, 1));
+    CHECK_THROWS(pseudo_random_deinterleave(std::vector<uint8_t>{}, 1));
     CHECK_THROWS(convolutional_interleave(random_bits(8), 0, 1));
-    CHECK_THROWS(convolutional_deinterleave({}, 4, 2));
+    CHECK_THROWS(convolutional_deinterleave(std::vector<uint8_t>{}, 4, 2));
 }
 
 // Golden hashes for a fixed 128-bit input (native run). The pseudo-random

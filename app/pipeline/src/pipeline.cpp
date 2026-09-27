@@ -6,6 +6,7 @@
 #include "detect.hpp"
 #include "dsp.hpp"
 #include "fec_dispatch.hpp"
+#include "soft_demod.hpp"
 
 namespace sigapp {
 
@@ -76,25 +77,63 @@ PipelineResult pipeline_finish(PipelinePrep prep, const Classification& classifi
         result.detection_score = detection.score;
     }
 
+    // Feature 3 (SIH26147 extra feature): the soft path needs the LLRs from
+    // demodulation, which only exists for linear schemes -- FSK has no soft demapper
+    // here (see soft_demod.hpp). Silently degrades to the hard path otherwise; the
+    // caller can tell which one ran from soft_decoding_used.
+    const bool try_soft = options.soft_decoding && scheme != "fsk" && fec_scheme.has_value() &&
+                         fec_supports_soft_decode(*fec_scheme);
+
     // NOTE (faithful to the original): after auto-detection the stream is
     // de-interleaved *again* here from the untrimmed demodulated bits, whereas
     // detect_params scored the convolutional candidate with its leading flush
     // bits removed. With a convolutional interleaver the two therefore differ.
-    const Bits* working = &result.demodulated_bits;
-    if (interleaver.has_value()) {
-        result.deinterleaved_bits = deinterleave(*working, *interleaver);
-        working = &*result.deinterleaved_bits;
+    if (fec_scheme.has_value() && !fec_msg_len.has_value()) {
+        throw std::invalid_argument("fec_msg_len is required when fec_scheme is given");
     }
 
-    if (fec_scheme.has_value()) {
-        if (!fec_msg_len.has_value()) {
-            throw std::invalid_argument("fec_msg_len is required when fec_scheme is given");
+    const Bits* working = &result.demodulated_bits;
+    Bits pre_decode_hard_bits;  // for the re-encode agreement score below
+    if (try_soft) {
+        const sigcore::ModulationScheme mod_scheme = linear_scheme_from_name(scheme);
+        const float sigma2 = sigcore::estimate_noise_variance_linear(*samples_for_demod, mod_scheme);
+        sigcore::LLRBuffer llrs = sigcore::soft_demodulate_linear(*samples_for_demod, mod_scheme, sigma2);
+        result.demodulated_bits = sigcore::llr_hard_decision(llrs);  // for display; matches the hard path exactly
+
+        if (interleaver.has_value()) {
+            llrs = deinterleave(llrs, *interleaver);
+            result.deinterleaved_bits = sigcore::llr_hard_decision(llrs);
         }
-        result.decoded_bits = fec_decode(*working, *fec_scheme, *fec_msg_len);
+        pre_decode_hard_bits = sigcore::llr_hard_decision(llrs);
+
+        result.decoded_bits = fec_decode_soft(llrs, *fec_scheme, *fec_msg_len);
+        result.soft_decoding_used = true;
         working = &*result.decoded_bits;
+    } else {
+        if (interleaver.has_value()) {
+            result.deinterleaved_bits = deinterleave(*working, *interleaver);
+            working = &*result.deinterleaved_bits;
+        }
+
+        if (fec_scheme.has_value()) {
+            pre_decode_hard_bits = *working;
+            result.decoded_bits = fec_decode(*working, *fec_scheme, *fec_msg_len);
+            working = &*result.decoded_bits;
+        }
+    }
+
+    if (result.decoded_bits.has_value()) {
+        const Bits re_encoded = fec_encode(*result.decoded_bits, *fec_scheme);
+        const size_t n = std::min(re_encoded.size(), pre_decode_hard_bits.size());
+        size_t matches = 0;
+        for (size_t i = 0; i < n; ++i) matches += (re_encoded[i] == pre_decode_hard_bits[i]);
+        result.reencode_agreement = n > 0 ? static_cast<double>(matches) / n : 0.0;
     }
 
     result.boundaries = find_header_payload_boundaries(*working, options.header_pattern);
+    // build_frame_raster only throws on empty input, which find_header_payload_boundaries
+    // above would already have thrown on, so `*working` here is always non-empty.
+    result.raster = build_frame_raster(*working);
 
     result.file_path = prep.signal.path;
     result.sample_rate = prep.signal.sample_rate;

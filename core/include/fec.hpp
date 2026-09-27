@@ -41,4 +41,10 @@ std::vector<uint8_t> concatenated_decode(const std::vector<uint8_t>& encoded_bit
 std::vector<uint8_t> ldpc_encode(const std::vector<uint8_t>& msg_bits);
 std::vector<uint8_t> ldpc_decode(const std::vector<uint8_t>& encoded_bits, size_t msg_len_bits);
 
+// Feature 3 (SIH26147 extra feature, soft-decision decoding): the same code, decoded
+// from channel LLRs with normalised min-sum belief propagation instead of Gallager
+// bit-flipping. `encoded_llrs.size()` must be a multiple of n=16, exactly like
+// ldpc_decode's bit-count requirement.
+std::vector<uint8_t> ldpc_decode_soft(const std::vector<float>& encoded_llrs, size_t msg_len_bits);
+
 }  // namespace sigcore

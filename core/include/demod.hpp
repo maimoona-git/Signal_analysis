@@ -44,6 +44,15 @@ std::vector<std::complex<float>> linear_modulate(const std::vector<uint8_t>& bit
 std::vector<uint8_t> linear_demodulate(const std::vector<std::complex<float>>& samples,
                                         ModulationScheme scheme);
 
+// Bits per symbol for a linear scheme (1 for BPSK/OOK, 2 for QPSK/ASK4, ...).
+unsigned int linear_bits_per_symbol(ModulationScheme scheme);
+
+// The scheme's full constellation, indexed by symbol value (0..2^bps - 1), in exactly
+// the bit-to-symbol packing bits_to_symbols/symbols_to_bits use (MSB first). Used by
+// soft_demod.hpp's max-log LLR computation, which needs every point, not just the
+// nearest one.
+std::vector<std::complex<float>> linear_constellation_points(ModulationScheme scheme);
+
 // M-ary FSK modulation.
 //  bps      : bits per symbol
 //  sps      : samples per symbol (must be >= 2^bps)

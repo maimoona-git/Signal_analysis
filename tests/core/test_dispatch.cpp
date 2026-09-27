@@ -98,8 +98,8 @@ TEST_CASE("interleave dispatcher matches the original: every kind, parameter set
 TEST_CASE("dispatchers name their errors") {
     auto message_of = [](auto&& fn) { try { fn(); } catch (const std::exception& e) { return std::string(e.what()); } return std::string(); };
     CHECK(message_of([] { fec_encode({1, 0}, "turbo"); }).find("unknown FEC scheme: 'turbo'") != std::string::npos);
-    CHECK(message_of([] { interleave({1, 0}, {"zigzag", {}, {}, {}, {}, {}}); }).find("unknown interleaver: 'zigzag'") != std::string::npos);
-    CHECK(message_of([] { interleave({1, 0}, InterleaverSpec{"block", 2u, {}, {}, {}, {}}); }).find("requires parameter 'cols'") != std::string::npos);
+    CHECK(message_of([] { interleave(Bits{1, 0}, InterleaverSpec{"zigzag", {}, {}, {}, {}, {}}); }).find("unknown interleaver: 'zigzag'") != std::string::npos);
+    CHECK(message_of([] { interleave(Bits{1, 0}, InterleaverSpec{"block", 2u, {}, {}, {}, {}}); }).find("requires parameter 'cols'") != std::string::npos);
     CHECK(message_of([] { demodulate({}, "morse"); }).find("unknown modulation scheme: 'morse'") != std::string::npos);
 }
 

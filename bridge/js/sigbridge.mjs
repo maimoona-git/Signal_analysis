@@ -110,6 +110,9 @@ export class SigBridge {
    *                     viterbi/ldpc, bytes for rs/concatenated)
    *   headerPattern     '0110...' or an array of bits (default: the stream's first 16 bits)
    *   autoDetect        with no interleaver/fec given, search for them blindly
+   *   softDecoding      Feature 3 (extra feature): decode from soft LLRs instead of hard bits,
+   *                     when the modulation/FEC support it (falls back to hard silently otherwise;
+   *                     result.softDecodingUsed says which one actually ran)
    *
    * Resolves to the result object documented in bridge/README.md.
    */

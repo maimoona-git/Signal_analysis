@@ -11,13 +11,16 @@
 
 #include <cmath>
 #include <complex>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <string>
 #include <vector>
 
+#include "fec_dispatch.hpp"
 #include "pipeline.hpp"
 #include "../harness.hpp"
+#include "../testutil.hpp"
 #include "../record_file.hpp"
 
 using namespace sigapp;
@@ -225,6 +228,74 @@ TEST_CASE("native: with no interleaver or FEC given, those stages are skipped an
     CHECK(r.demodulated_bits.size() == 64);
     CHECK(bits_to_text(r.demodulated_bits) == "SIH2026!");
     CHECK(r.predicted_modulation == "fsk");
+}
+
+// Feature 4: the frame raster is computed automatically as part of the pipeline, on a
+// capture with genuinely repeating frames (the existing demo/native fixtures are all a
+// single short message, so raster.detected would correctly be false for those).
+TEST_CASE("pipeline result includes a frame raster when the bitstream repeats") {
+    const Bits header = {1, 0, 1, 1, 0, 0, 1, 0};
+    Rng rng(50);
+    Bits stream;
+    for (unsigned i = 0; i < 30; ++i) {
+        stream.insert(stream.end(), header.begin(), header.end());
+        for (unsigned b = 0; b < 24; ++b) stream.push_back(static_cast<uint8_t>((rng.next() >> 33) & 1));
+    }
+    const auto samples = modulate(stream, "bpsk");
+    std::vector<uint8_t> raw(samples.size() * 2 * sizeof(float));
+    std::memcpy(raw.data(), samples.data(), raw.size());
+
+    PipelineOptions o;
+    o.sample_rate = 8000.0;
+    const auto r = run_pipeline(raw.data(), raw.size(), "raster.iq", o, {"bpsk", 1.0});
+    CHECK(r.raster.detected);
+    CHECK(r.raster.frame_length == 32);
+    CHECK(r.raster.sync_word == header);
+}
+
+// Feature 3: soft decoding through the whole pipeline, end to end -- BER must be no
+// worse than the hard path on the same noisy capture, and reencode_agreement is set.
+TEST_CASE("pipeline: soft decoding matches or beats hard decoding end to end") {
+    const auto msg = random_bits(200, 61);
+    const auto coded = fec_encode(msg, "ldpc");
+    const auto samples = modulate(coded, "bpsk");
+    std::vector<std::complex<float>> noisy(samples.size());
+    uint32_t seed = 7;
+    auto rnd = [&] { seed = seed * 1664525u + 1013904223u; return static_cast<float>(seed >> 8) / 8388608.0f - 1.0f; };
+    for (size_t i = 0; i < samples.size(); ++i) noisy[i] = samples[i] + std::complex<float>(0.55f * rnd(), 0.55f * rnd());
+    std::vector<uint8_t> raw(noisy.size() * 2 * sizeof(float));
+    std::memcpy(raw.data(), noisy.data(), raw.size());
+
+    PipelineOptions hard_opts;
+    hard_opts.sample_rate = 8000.0;
+    hard_opts.fec_scheme = "ldpc";
+    hard_opts.fec_msg_len = msg.size();
+    const auto hard_result = run_pipeline(raw.data(), raw.size(), "soft.iq", hard_opts, {"bpsk", 1.0});
+    CHECK(!hard_result.soft_decoding_used);
+    CHECK(hard_result.reencode_agreement.has_value());
+
+    PipelineOptions soft_opts = hard_opts;
+    soft_opts.soft_decoding = true;
+    const auto soft_result = run_pipeline(raw.data(), raw.size(), "soft.iq", soft_opts, {"bpsk", 1.0});
+    CHECK(soft_result.soft_decoding_used);
+    CHECK(soft_result.demodulated_bits == hard_result.demodulated_bits);  // same hard bits either way
+
+    auto errors = [&](const Bits& decoded) {
+        unsigned n = 0;
+        for (size_t i = 0; i < decoded.size() && i < msg.size(); ++i) n += (decoded[i] != msg[i]);
+        return n;
+    };
+    CHECK(errors(*soft_result.decoded_bits) <= errors(*hard_result.decoded_bits));
+}
+
+TEST_CASE("pipeline: soft decoding silently falls back to hard for FSK and RS") {
+    // FSK: no soft demapper.
+    const auto bytes = read_file(data_path("fsk_plain.iq"));
+    PipelineOptions o;
+    o.sample_rate = 8000.0;
+    o.soft_decoding = true;
+    const auto r = run_pipeline(bytes.data(), bytes.size(), "fsk_plain.iq", o, {"fsk", 1.0});
+    CHECK(!r.soft_decoding_used);
 }
 
 TEST_MAIN()

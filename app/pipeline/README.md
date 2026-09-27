@@ -59,3 +59,66 @@ The port reproduces the original's behaviour, not an idealised version of it:
 
 Fixing any of these is a deliberate decision to diverge from the native app;
 do it in both projects, then regenerate the fixtures.
+
+## Feature 4 (SIH26147 extra feature): frame raster view
+
+`raster.hpp`/`raster.cpp` find the repeating frame length (autocorrelation, smallest
+statistically-real peak — a fixed lag beats noise once its correlation clears an
+absolute floor that scales with `1/sqrt(n)`, not a fraction of the strongest peak
+anywhere in range: a counter field's own LSB *decorrelates* the stream at the true
+period and correlates at even multiples of it, so demanding a fraction of a possibly
+inflated harmonic can reject the real answer), fold into a frame x bit matrix, re-align
+rows for slips (ranked-column reference, not a fixed threshold, since a truly constant
+column's measured stability dilutes with however many rows are actually corrupted), and
+label columns constant / counter-like / payload. The sync word is the leading constant
+run; the whole stream is re-searched for it with a little bit-error tolerance.
+
+**Known limitation, found while testing:** a repeating header has its own internal
+autocorrelation. Since it recurs identically every frame, an arbitrarily-chosen header
+can make the detector lock onto a shorter *internal* repeat instead of the intended
+frame length — honestly, not a wrong-but-confident guess, just the wrong real
+periodicity. Real protocols solve this by choosing a low-autocorrelation sync word
+(e.g. a Barker code); this is not a bug to fix here, it is why that practice exists.
+
+**Performance cap:** a huge capture can fold into an enormous row count if the detected
+period is small, and every later stage costs at least one pass per row. `RasterOptions::
+max_analysis_bits` (default 500,000) bounds this regardless of capture size, exactly like
+the GUI's waterfall column cap (`app/README.md`) — found the same way, by measuring a
+real large capture, not assumed.
+
+## Feature 3 (SIH26147 extra feature): soft-decision decoding
+
+Instead of forcing each received symbol to the nearest constellation point, `core/
+include/soft_demod.hpp` reports a log-likelihood ratio (LLR) per bit -- how confident
+the demodulator is, not just its guess (convention: LLR = log(P(bit=0)/P(bit=1));
+positive means the bit is probably 0). One generic max-log formula, working from the
+scheme's full constellation, covers every linear scheme (BPSK through QAM256/ASK/OOK);
+noise variance is estimated decision-directed (hard-demodulate, re-modulate, measure
+the error). De-interleaving (`core/include/interleave.hpp`'s float overloads -- every
+interleaver here is a fixed gather/permutation, so the same code moves LLRs or bits)
+and FEC decoding (`viterbi_decode_soft`, `ldpc_decode_soft`, a normalised min-sum
+belief-propagation decoder on the same parity-check matrix as the hard bit-flipping
+one) then consume the LLRs directly, ending in ordinary hard decoded bits -- soft vs
+hard differ only in *how* that decode happened, not in the type it produces.
+
+`PipelineOptions::soft_decoding` turns this on; it silently falls back to the hard path
+when it does not apply (`PipelineResult::soft_decoding_used` says which one ran).
+`reencode_agreement` (the feature spec's Section 2.3 scoring primitive: re-encode the
+decoded message, compare against what was actually received) is computed in both
+modes whenever a FEC scheme was used, so hard and soft are directly comparable.
+
+**Verified, not assumed:** bit error rate is measured to be no worse with soft
+decoding than hard, across an SNR sweep, for both Viterbi and LDPC (`test_soft_decode.
+cpp`), and end to end through the whole pipeline and the real bridge (`test_pipeline.
+cpp`, `tests/bridge/pipeline.test.mjs`).
+
+**Known limitation, found while building this, not assumed away:** FSK has no soft
+demodulator here. liquid's FSK modulator is phase-continuous across symbols (each
+symbol's waveform depends on where the previous one left the phase), so a reference
+tone built for one symbol in isolation is not what that symbol looks like inside a
+real sequence -- confirmed by measurement (the true transmitted symbol's isolated-tone
+distance was not even the smallest of the candidates on a test block). A correct
+metric would need to re-synthesise the whole downstream waveform per hypothesis, which
+is real additional work, not a small fix. Soft decoding therefore covers every linear
+scheme, which is what Viterbi/LDPC are paired with in practice; FSK stays hard-decision
+only, and the pipeline says so via `soft_decoding_used`.

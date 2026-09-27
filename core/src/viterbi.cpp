@@ -2,6 +2,7 @@
 
 #include <climits>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -108,6 +109,64 @@ std::vector<uint8_t> viterbi_decode_bits(const std::vector<uint8_t>& coded_bits,
         throw std::runtime_error("viterbi_decode_bits: msg_len_bits exceeds decoded length");
     }
     bits.resize(bits.size() - (kK - 1));  // drop tail
+    bits.resize(msg_len_bits);
+    return bits;
+}
+
+std::vector<uint8_t> viterbi_decode_soft(const std::vector<float>& coded_llrs, size_t msg_len_bits) {
+    if (coded_llrs.empty()) {
+        throw std::runtime_error("viterbi_decode_soft: coded_llrs is empty");
+    }
+    if (coded_llrs.size() % 2 != 0) {
+        throw std::runtime_error("viterbi_decode_soft: coded_llrs.size() must be even");
+    }
+    const size_t num_steps = coded_llrs.size() / 2;
+    constexpr float kInf = std::numeric_limits<float>::infinity();
+
+    std::vector<float> path_metric(kNumStates, kInf);
+    path_metric[0] = 0.0f;
+
+    std::vector<std::vector<std::pair<uint8_t, uint8_t>>> backptr(
+        num_steps, std::vector<std::pair<uint8_t, uint8_t>>(kNumStates, {0, 0}));
+
+    auto branch_cost = [](unsigned int expected_bit, float llr) { return expected_bit == 0 ? -llr : llr; };
+
+    for (size_t t = 0; t < num_steps; ++t) {
+        const float r1 = coded_llrs[2 * t];
+        const float r2 = coded_llrs[2 * t + 1];
+
+        std::vector<float> new_metric(kNumStates, kInf);
+        for (unsigned int s = 0; s < kNumStates; ++s) {
+            if (path_metric[s] == kInf) continue;
+            for (unsigned int u = 0; u < 2; ++u) {
+                unsigned int o1, o2;
+                output_bits(s, u, o1, o2);
+                const float bm = branch_cost(o1, r1) + branch_cost(o2, r2);
+                const unsigned int ns = ((s << 1) | u) & (kNumStates - 1);
+                const float cost = path_metric[s] + bm;
+                if (cost < new_metric[ns]) {
+                    new_metric[ns] = cost;
+                    backptr[t][ns] = {static_cast<uint8_t>(s), static_cast<uint8_t>(u)};
+                }
+            }
+        }
+        path_metric = new_metric;
+    }
+
+    std::vector<uint8_t> bits_reversed;
+    bits_reversed.reserve(num_steps);
+    unsigned int state = 0;
+    for (size_t t = num_steps; t-- > 0;) {
+        auto [prev_state, input_bit] = backptr[t][state];
+        bits_reversed.push_back(input_bit);
+        state = prev_state;
+    }
+
+    std::vector<uint8_t> bits(bits_reversed.rbegin(), bits_reversed.rend());
+    if (bits.size() < kK - 1 || msg_len_bits > bits.size() - (kK - 1)) {
+        throw std::runtime_error("viterbi_decode_soft: msg_len_bits exceeds decoded length");
+    }
+    bits.resize(bits.size() - (kK - 1));
     bits.resize(msg_len_bits);
     return bits;
 }

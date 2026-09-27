@@ -44,4 +44,21 @@ std::vector<uint8_t> convolutional_deinterleave(const std::vector<uint8_t>& bits
                                                  unsigned int branches,
                                                  unsigned int delay_increment);
 
+// Feature 3 (SIH26147 extra feature, soft-decision decoding): the same four
+// interleavers, overloaded on LLRBuffer (std::vector<float>) so a de-interleaver moves
+// soft confidences exactly where it would move the corresponding hard bit. Every
+// interleaver here is a pure "gather from a fixed source position" operation, so this
+// is the identical permutation, just applied to floats instead of bytes -- not a
+// different algorithm.
+std::vector<float> block_interleave(const std::vector<float>& llrs, unsigned int rows, unsigned int cols);
+std::vector<float> block_deinterleave(const std::vector<float>& llrs, unsigned int rows, unsigned int cols);
+std::vector<float> diagonal_interleave(const std::vector<float>& llrs, unsigned int rows, unsigned int cols);
+std::vector<float> diagonal_deinterleave(const std::vector<float>& llrs, unsigned int rows, unsigned int cols);
+std::vector<float> pseudo_random_interleave(const std::vector<float>& llrs, unsigned int seed);
+std::vector<float> pseudo_random_deinterleave(const std::vector<float>& llrs, unsigned int seed);
+std::vector<float> convolutional_interleave(const std::vector<float>& llrs, unsigned int branches,
+                                            unsigned int delay_increment);
+std::vector<float> convolutional_deinterleave(const std::vector<float>& llrs, unsigned int branches,
+                                              unsigned int delay_increment);
+
 }  // namespace sigcore

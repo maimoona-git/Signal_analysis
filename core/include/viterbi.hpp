@@ -17,4 +17,12 @@ std::vector<uint8_t> viterbi_encode_bits(const std::vector<uint8_t>& msg_bits);
 std::vector<uint8_t> viterbi_decode_bits(const std::vector<uint8_t>& coded_bits,
                                           size_t msg_len_bits);
 
+// Feature 3 (SIH26147 extra feature, soft-decision decoding): the same code, decoded
+// from LLRs instead of hard bits. The branch metric a hard decision would compute as a
+// Hamming distance against a 0/1 received bit becomes, per coded bit, `expected == 0 ?
+// -llr : llr` against the received LLR (smaller is a better match, exactly the same
+// convention as the Hamming-distance metric, just continuous instead of {0, 1}): the
+// trellis and traceback are otherwise identical to viterbi_decode_bits.
+std::vector<uint8_t> viterbi_decode_soft(const std::vector<float>& coded_llrs, size_t msg_len_bits);
+
 }  // namespace sigcore

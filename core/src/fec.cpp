@@ -4,6 +4,8 @@
 #include "viterbi.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace sigcore {
@@ -182,6 +184,73 @@ std::vector<uint8_t> decode_block(const std::vector<uint8_t>& received_block) {
     return std::vector<uint8_t>(r.begin(), r.begin() + kK);
 }
 
+// Feature 3 (SIH26147 extra feature, soft-decision decoding): normalised min-sum
+// belief propagation on the same parity-check matrix as decode_block, taking channel
+// LLRs instead of hard bits. Standard sum-product/min-sum message passing:
+//   variable -> check: this variable's current total LLR, minus what it last heard
+//                       from this particular check (the "extrinsic" message)
+//   check -> variable: the sign is the product of the other variables' signs, the
+//                       magnitude the smallest of their magnitudes (min-sum: an
+//                       approximation to the true sum-product update, much cheaper
+//                       and the standard practical choice)
+// A block "converges" once its hard decision satisfies every parity check, exactly
+// the same stopping rule decode_block uses; kMaxIters otherwise bounds the work.
+std::vector<uint8_t> decode_block_soft(const std::vector<float>& llrs) {
+    static const auto h = build_h();
+    // Per check, the connected variable indices (a fixed, small set: precomputed once).
+    static const auto neighbors = [] {
+        std::vector<std::vector<unsigned int>> nb(kM);
+        for (unsigned int i = 0; i < kM; ++i)
+            for (unsigned int j = 0; j < kN; ++j)
+                if (h[i][j]) nb[i].push_back(j);
+        return nb;
+    }();
+
+    std::vector<std::vector<float>> v2c(kM, std::vector<float>(kN, 0.0f));  // only entries in `neighbors` are used
+    std::vector<float> total(llrs.begin(), llrs.end());
+
+    for (unsigned int iter = 0; iter < kMaxIters; ++iter) {
+        // check -> variable
+        std::vector<std::vector<float>> c2v(kM, std::vector<float>(kN, 0.0f));
+        for (unsigned int i = 0; i < kM; ++i) {
+            for (unsigned int j : neighbors[i]) {
+                float sign = 1.0f;
+                float min_mag = std::numeric_limits<float>::infinity();
+                for (unsigned int jj : neighbors[i]) {
+                    if (jj == j) continue;
+                    const float m = v2c[i][jj];
+                    sign *= (m < 0.0f) ? -1.0f : 1.0f;
+                    min_mag = std::min(min_mag, std::fabs(m));
+                }
+                c2v[i][j] = sign * min_mag;
+            }
+        }
+        // variable update (total LLR), then the new extrinsic v2c for the next round
+        for (unsigned int j = 0; j < kN; ++j) {
+            total[j] = llrs[j];
+            for (unsigned int i = 0; i < kM; ++i)
+                if (h[i][j]) total[j] += c2v[i][j];
+        }
+        for (unsigned int i = 0; i < kM; ++i) {
+            for (unsigned int j : neighbors[i]) v2c[i][j] = total[j] - c2v[i][j];
+        }
+
+        std::vector<uint8_t> hard(kN);
+        for (unsigned int j = 0; j < kN; ++j) hard[j] = total[j] < 0.0f ? 1 : 0;
+        bool satisfied = true;
+        for (unsigned int i = 0; i < kM && satisfied; ++i) {
+            uint8_t s = 0;
+            for (unsigned int j : neighbors[i]) s ^= hard[j];
+            satisfied = (s == 0);
+        }
+        if (satisfied) return std::vector<uint8_t>(hard.begin(), hard.begin() + kK);
+    }
+
+    std::vector<uint8_t> hard(kN);
+    for (unsigned int j = 0; j < kN; ++j) hard[j] = total[j] < 0.0f ? 1 : 0;
+    return std::vector<uint8_t>(hard.begin(), hard.begin() + kK);
+}
+
 }  // namespace
 
 std::vector<uint8_t> ldpc_encode(const std::vector<uint8_t>& msg_bits) {
@@ -221,6 +290,27 @@ std::vector<uint8_t> ldpc_decode(const std::vector<uint8_t>& encoded_bits, size_
 
     if (msg_len_bits > decoded.size()) {
         throw std::runtime_error("ldpc_decode: msg_len_bits exceeds decoded length");
+    }
+    decoded.resize(msg_len_bits);
+    return decoded;
+}
+
+std::vector<uint8_t> ldpc_decode_soft(const std::vector<float>& llrs, size_t msg_len_bits) {
+    if (llrs.empty()) {
+        throw std::runtime_error("ldpc_decode_soft: llrs is empty");
+    }
+    if (llrs.size() % kN != 0) {
+        throw std::runtime_error("ldpc_decode_soft: llrs.size() must be a multiple of n=16");
+    }
+    size_t num_blocks = llrs.size() / kN;
+    std::vector<uint8_t> decoded(num_blocks * kK);
+    for (size_t b = 0; b < num_blocks; ++b) {
+        std::vector<float> block(llrs.begin() + static_cast<long>(b * kN), llrs.begin() + static_cast<long>((b + 1) * kN));
+        auto msg = decode_block_soft(block);
+        std::copy(msg.begin(), msg.end(), decoded.begin() + static_cast<long>(b * kK));
+    }
+    if (msg_len_bits > decoded.size()) {
+        throw std::runtime_error("ldpc_decode_soft: msg_len_bits exceeds decoded length");
     }
     decoded.resize(msg_len_bits);
     return decoded;

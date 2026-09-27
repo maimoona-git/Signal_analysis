@@ -206,6 +206,74 @@ describe('runPipeline reproduces the original native pipeline', () => {
   });
 });
 
+describe("Feature 3 (soft-decision decoding) through the bridge", () => {
+  let bridge;
+  before(async () => {
+    bridge = await SigBridge.create(factory);
+    bridge.setClassifier(() => ({ classes: ['bpsk'], probabilities: [1] }));
+  });
+  after(() => bridge.clearClassifier());
+
+  it('soft decoding matches or beats hard decoding on a noisy LDPC+BPSK capture, and reports which ran', async () => {
+    // Deterministic message + LDPC(8,16) encode + BPSK modulate + AWGN, built directly in JS
+    // (mirrors the native test_pipeline.cpp construction) so this exercises the real bridge,
+    // not just the C++ unit test.
+    const msgBits = [];
+    let seed = 61;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    for (let i = 0; i < 32; i++) msgBits.push(rnd() < 0.5 ? 0 : 1);
+
+    // LDPC(8,16) staircase encode, matching core/src/fec.cpp's construction exactly.
+    const kK = 8, kM = 8;
+    const h1 = Array.from({ length: kM }, () => new Array(kK).fill(0));
+    for (let j = 0; j < kK; j++) for (const r of [(j * 3 + 1) % kM, (j * 5 + 2) % kM, (j * 2 + 7) % kM]) h1[r][j] = 1;
+    const encodeBlock = (block) => {
+      const codeword = block.slice();
+      const parity = new Array(kM).fill(0);
+      for (let r = 0; r < kM; r++) {
+        let acc = 0;
+        for (let j = 0; j < kK; j++) acc ^= (h1[r][j] & block[j]);
+        if (r > 0) acc ^= parity[r - 1];
+        parity[r] = acc;
+      }
+      return codeword.concat(parity);
+    };
+    let coded = [];
+    for (let b = 0; b < msgBits.length / kK; b++) coded = coded.concat(encodeBlock(msgBits.slice(b * kK, (b + 1) * kK)));
+
+    // BPSK: bit 0 -> +1, bit 1 -> -1 (checked in Phase 6), plus AWGN.
+    const n = coded.length;
+    const samples = new Float32Array(2 * n);
+    for (let i = 0; i < n; i++) {
+      const clean = coded[i] ? -1 : 1;
+      samples[2 * i] = clean + 0.5 * (rnd() * 2 - 1);
+      samples[2 * i + 1] = 0.5 * (rnd() * 2 - 1);
+    }
+    const file = new File([samples.buffer], 'soft.iq');
+    const opts = { sampleRate: 8000, fecScheme: 'ldpc', fecMsgLen: msgBits.length };
+
+    const hard = await bridge.runPipeline(file, opts);
+    const soft = await bridge.runPipeline(file, { ...opts, softDecoding: true });
+
+    assert.equal(hard.softDecodingUsed, false);
+    assert.equal(soft.softDecodingUsed, true);
+    assert.ok(typeof hard.reencodeAgreement === 'number' && hard.reencodeAgreement >= 0 && hard.reencodeAgreement <= 1);
+    assert.deepEqual([...hard.demodulatedBits], [...soft.demodulatedBits]);  // same hard bits either way
+
+    const errorCount = (decoded) => msgBits.reduce((acc, bit, i) => acc + (decoded[i] !== bit ? 1 : 0), 0);
+    assert.ok(errorCount(soft.decodedBits) <= errorCount(hard.decodedBits),
+      `soft ${errorCount(soft.decodedBits)} errors, hard ${errorCount(hard.decodedBits)} errors`);
+  });
+
+  it('falls back to hard decoding for FSK (no soft demapper) without erroring', async () => {
+    bridge.setClassifier(() => ({ classes: ['fsk'], probabilities: [1] }));
+    const r = await bridge.runPipeline(asFile('fsk_plain.iq'), { sampleRate: 8000, softDecoding: true });
+    assert.equal(r.softDecodingUsed, false);
+    assert.match(r.demodulatedBits && 'ok', /ok/);  // pipeline still ran to completion
+    bridge.setClassifier(() => ({ classes: ['bpsk'], probabilities: [1] }));
+  });
+});
+
 describe('runPipeline option validation and failure modes', () => {
   let bridge;
   const iq = () => new File([fileBytes('mod_bpsk.iq')], 'mod_bpsk.iq');
@@ -222,6 +290,7 @@ describe('runPipeline option validation and failure modes', () => {
 
   it('rejects unknown options (typos) at every level', async () => {
     await assert.rejects(bridge.runPipeline(iq(), { fecMsglen: 8 }), /unknown pipeline option 'fecMsglen'/);
+    await assert.rejects(bridge.runPipeline(iq(), { softDecoding: 1 }), /softDecoding must be a boolean/);
     await assert.rejects(bridge.runPipeline(iq(), { demod: { bps: 1 } }), /unknown demod option 'bps'/);
     await assert.rejects(bridge.runPipeline(iq(), { interleaver: { kind: 'block', rows: 2, cols: 2, cols2: 1 } }), /unknown interleaver option 'cols2'/);
   });
@@ -282,12 +351,48 @@ describe('runPipeline option validation and failure modes', () => {
     const r = await bridge.runPipeline(iq(), { sampleRate: 4000, samplesPerSymbol: 2 });
     assert.deepEqual(Object.keys(r).sort(), ['boundaries', 'decodedBits', 'deinterleavedBits', 'demodulatedBits', 'detectedFec',
       'detectedInterleaver', 'detectionScore', 'fileFormat', 'filePath', 'numSamples', 'predictedConfidence', 'predictedModulation',
-      'sampleRate', 'samples', 'spectrogram'].sort());
+      'raster', 'reencodeAgreement', 'sampleRate', 'samples', 'softDecodingUsed', 'spectrogram'].sort());
+    assert.equal(r.softDecodingUsed, false);
     assert.equal(r.deinterleavedBits, null);
     assert.equal(r.decodedBits, null);
     assert.equal(r.detectedInterleaver, null);
     assert.ok(r.samples instanceof Float32Array && r.demodulatedBits instanceof Uint8Array);
     assert.ok(r.spectrogram.freqs instanceof Float64Array && r.spectrogram.data instanceof Float32Array);
     assert.deepEqual(Object.keys(r.boundaries).sort(), ['framePeriod', 'headerPattern', 'headerPositions', 'payloads']);
+    assert.deepEqual(Object.keys(r.raster).sort(),
+      ['columns', 'detected', 'frameLength', 'headerColumns', 'matrix', 'numFrames', 'rowShift', 'syncPositions', 'syncWord'].sort());
+  });
+
+  it('Feature 4: the frame raster is populated for a capture with a genuinely repeating frame', async () => {
+    // A short capture (a single 64-bit message) has nothing to repeat, so raster.detected
+    // must honestly be false there -- this builds a capture that DOES repeat and checks
+    // the raster comes back through the bridge with the expected shape.
+    const header = [1, 0, 1, 1, 0, 0, 1, 0];
+    let seed = 5;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return (seed >>> 24) & 1; };
+    const bits = [];
+    for (let i = 0; i < 30; i++) {
+      bits.push(...header);
+      for (let b = 0; b < 24; b++) bits.push(rnd());
+    }
+    // BPSK: bit 0 -> +1, bit 1 -> -1 (liquid-dsp's convention), one real sample per bit.
+    const samples = new Float32Array(bits.length * 2);
+    bits.forEach((bit, i) => { samples[2 * i] = bit ? -1 : 1; samples[2 * i + 1] = 0; });
+    // (checked against core/src/demod.cpp's actual mapping, not assumed)
+    const file = new File([samples.buffer], 'raster.iq');
+
+    bridge.setClassifier(() => ({ classes: ['bpsk'], probabilities: [1] }));
+    const r = await bridge.runPipeline(file, { sampleRate: 8000 });
+    bridge.setClassifier(() => ({ classes: ['bpsk'], probabilities: [1] }));
+
+    assert.equal(r.raster.detected, true);
+    assert.equal(r.raster.frameLength, 32);
+    assert.equal(r.raster.numFrames, 30);
+    assert.deepEqual([...r.raster.syncWord], header);
+    assert.equal(r.raster.matrix.length, 32 * 30);
+    assert.equal(r.raster.columns.length, 32);
+    assert.ok(r.raster.columns.slice(0, 8).every((c) => c.label === 'constant'));
+    assert.ok(r.raster.headerColumns.length >= 8);
+    assert.equal(r.raster.syncPositions.length >= 30, true);
   });
 });

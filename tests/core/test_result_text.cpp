@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "raster.hpp"
 #include "result_text.hpp"
 #include "../harness.hpp"
 #include "../record_file.hpp"
@@ -146,6 +147,80 @@ TEST_CASE("a message longer than the limit is cut with a note; shorter or equal 
     };
     CHECK(without_message(cut) == without_message(full));
     CHECK(format_result_text(r, 0).find("'' ... (40 characters in all, the first 0 shown)") != std::string::npos);
+}
+
+// Feature 4: format_raster_text (new to this port, no original-app text to match against).
+TEST_CASE("format_raster_text: not detected, and a fully detected raster") {
+    FrameRaster none;
+    CHECK(format_raster_text(none) ==
+          "No repeating frame structure detected: try a longer capture, or supply a "
+          "candidate frame length if one is known.");
+
+    FrameRaster r;
+    r.detected = true;
+    r.frame_length = 10;
+    r.num_frames = 20;
+    r.sync_word = {1, 0, 1, 1, 0, 0, 1, 0};  // 0xb2
+    r.header_columns = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+    r.columns.resize(10);
+    for (int i = 0; i < 8; ++i) r.columns[i].label = ColumnLabel::Constant;
+    r.columns[8].label = ColumnLabel::CounterLike;
+    r.columns[9].label = ColumnLabel::Payload;
+    r.sync_positions = {0, 10, 20, 30};
+
+    const std::string text = format_raster_text(r);
+    CHECK(text.find("Frame length:         10 bits") != std::string::npos);
+    CHECK(text.find("Frames:               20") != std::string::npos);
+    CHECK(text.find("Sync word:            10110010 (0xb2)") != std::string::npos);
+    CHECK(text.find("Header columns:       9 of 10 (8 constant, 1 counter-like)") != std::string::npos);
+    CHECK(text.find("Payload columns:      1") != std::string::npos);
+    CHECK(text.find("Sync word recurrences: 4") != std::string::npos);
+}
+
+TEST_CASE("format_raster_text: hex-encodes a non-byte-aligned sync word with zero padding") {
+    FrameRaster r;
+    r.detected = true;
+    r.sync_word = {1, 0, 1};  // 3 bits -> padded to "10100000" = 0xa0
+    r.columns.resize(3, RasterColumn{});
+    const std::string text = format_raster_text(r);
+    CHECK(text.find("Sync word:            101 (0xa0)") != std::string::npos);
+
+    FrameRaster empty_sync;
+    empty_sync.detected = true;
+    CHECK(format_raster_text(empty_sync).find("Sync word:             (0x-)") != std::string::npos);
+}
+
+// Feature 3: the opt-in soft-decoding lines, and that they change nothing by default.
+TEST_CASE("format_result_text: soft-decoding info is opt-in and does not disturb the original text") {
+    PipelineResult r;
+    r.predicted_modulation = "bpsk";
+    r.boundaries.header_pattern = {1, 0};
+    r.decoded_bits = Bits{1, 0, 1, 1};
+    r.soft_decoding_used = true;
+    r.reencode_agreement = 0.973;
+
+    const std::string original = format_result_text(r);
+    CHECK(original.find("Decoding mode:") == std::string::npos);
+    CHECK(original.find("Re-encode agreement:") == std::string::npos);
+
+    const std::string extended = format_result_text(r, SIZE_MAX, /*show_soft_decoding_info=*/true);
+    CHECK(extended.find("Decoding mode:        soft (LLR)") != std::string::npos);
+    CHECK(extended.find("Re-encode agreement:  0.973") != std::string::npos);
+    // every other line is unchanged
+    auto strip = [](std::string t, const char* marker) {
+        size_t p;
+        while ((p = t.find(marker)) != std::string::npos) t = t.substr(0, p) + t.substr(t.find('\n', p) + 1);
+        return t;
+    };
+    CHECK(strip(strip(extended, "Decoding mode:"), "Re-encode agreement:") == original);
+
+    r.soft_decoding_used = false;
+    CHECK(format_result_text(r, SIZE_MAX, true).find("Decoding mode:        hard") != std::string::npos);
+
+    r.decoded_bits = std::nullopt;  // no FEC used: neither line applies, even opted in
+    r.reencode_agreement = std::nullopt;
+    CHECK(format_result_text(r, SIZE_MAX, true).find("Decoding mode:") == std::string::npos);
+    CHECK(format_result_text(r, SIZE_MAX, true).find("Re-encode agreement:") == std::string::npos);
 }
 
 TEST_MAIN()

@@ -183,7 +183,7 @@ sigapp::PipelineOptions options_from_js(const val& o) {
     if (!present(o)) return options;
     if (o.typeOf().as<std::string>() != "object") throw std::invalid_argument("pipeline options must be an object");
     reject_unknown_keys(o, {"sampleRate", "samplesPerSymbol", "demod", "interleaver", "fecScheme", "fecMsgLen",
-                            "headerPattern", "autoDetect"}, "pipeline");
+                            "headerPattern", "autoDetect", "softDecoding"}, "pipeline");
 
     if (present(o["sampleRate"])) options.sample_rate = number_option(o["sampleRate"], "sampleRate");
     if (present(o["samplesPerSymbol"])) options.samples_per_symbol = uint_option(o["samplesPerSymbol"], "samplesPerSymbol");
@@ -193,6 +193,10 @@ sigapp::PipelineOptions options_from_js(const val& o) {
     if (present(o["autoDetect"])) {
         if (o["autoDetect"].typeOf().as<std::string>() != "boolean") throw std::invalid_argument("option autoDetect must be a boolean");
         options.auto_detect = o["autoDetect"].as<bool>();
+    }
+    if (present(o["softDecoding"])) {
+        if (o["softDecoding"].typeOf().as<std::string>() != "boolean") throw std::invalid_argument("option softDecoding must be a boolean");
+        options.soft_decoding = o["softDecoding"].as<bool>();
     }
 
     const val demod = o["demod"];
@@ -236,6 +240,44 @@ val interleaver_out(const sigapp::InterleaverSpec& s) {
     return o;
 }
 
+std::string column_label_string(sigapp::ColumnLabel label) {
+    switch (label) {
+        case sigapp::ColumnLabel::Constant: return "constant";
+        case sigapp::ColumnLabel::CounterLike: return "counterLike";
+        default: return "payload";
+    }
+}
+
+// Feature 4 (SIH26147 extra feature): the frame raster view.
+val raster_out(const sigapp::FrameRaster& r) {
+    val out = val::object();
+    out.set("detected", r.detected);
+    out.set("frameLength", r.frame_length);
+    out.set("numFrames", r.num_frames);
+    out.set("matrix", bits_out(r.matrix));  // row-major numFrames x frameLength
+    val row_shift = val::array();
+    for (int s : r.row_shift) row_shift.call<void>("push", s);
+    out.set("rowShift", row_shift);
+    val columns = val::array();
+    for (const auto& col : r.columns) {
+        val c = val::object();
+        c.set("onesFraction", col.ones_fraction);
+        c.set("stability", col.stability);
+        c.set("transitionRate", col.transition_rate);
+        c.set("label", column_label_string(col.label));
+        columns.call<void>("push", c);
+    }
+    out.set("columns", columns);
+    out.set("syncWord", bits_out(r.sync_word));
+    val header_columns = val::array();
+    for (size_t c : r.header_columns) header_columns.call<void>("push", static_cast<double>(c));
+    out.set("headerColumns", header_columns);
+    val sync_positions = val::array();
+    for (size_t p : r.sync_positions) sync_positions.call<void>("push", static_cast<double>(p));
+    out.set("syncPositions", sync_positions);
+    return out;
+}
+
 val pipeline_result_to_js(const sigapp::PipelineResult& r) {
     val out = val::object();
     out.set("filePath", r.file_path);
@@ -272,6 +314,9 @@ val pipeline_result_to_js(const sigapp::PipelineResult& r) {
     out.set("detectedInterleaver", r.detected_interleaver ? interleaver_out(*r.detected_interleaver) : val::null());
     out.set("detectedFec", r.detected_fec ? val(*r.detected_fec) : val::null());
     out.set("detectionScore", r.detection_score ? val(*r.detection_score) : val::null());
+    out.set("softDecodingUsed", r.soft_decoding_used);
+    out.set("reencodeAgreement", r.reencode_agreement ? val(*r.reencode_agreement) : val::null());
+    out.set("raster", raster_out(r.raster));
     return out;
 }
 

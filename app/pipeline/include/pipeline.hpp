@@ -25,6 +25,7 @@
 #include "correlate.hpp"
 #include "demod_dispatch.hpp"
 #include "interleave_dispatch.hpp"
+#include "raster.hpp"
 #include "signal_io.hpp"
 
 namespace sigapp {
@@ -57,6 +58,14 @@ struct PipelineOptions {
     std::optional<size_t> fec_msg_len;        // required when fec_scheme is given
     std::optional<Bits> header_pattern;       // default: the stream's first 16 bits
     bool auto_detect = false;
+
+    // Feature 3 (SIH26147 extra feature): demodulate to LLRs and decode from them
+    // instead of hard bits, when the modulation and FEC scheme support it (any linear
+    // scheme, i.e. not FSK; "viterbi" or "ldpc", not "rs"/"concatenated" -- see
+    // fec_dispatch.hpp's fec_supports_soft_decode). Silently falls back to the hard
+    // path otherwise (PipelineResult::soft_decoding_used says which one actually ran),
+    // so turning this on is always safe to try.
+    bool soft_decoding = false;
 };
 
 // What the ML classifier decided.
@@ -86,6 +95,21 @@ struct PipelineResult {
     std::optional<InterleaverSpec> detected_interleaver;
     std::optional<std::string> detected_fec;
     std::optional<int> detection_score;
+
+    // Feature 4 (SIH26147 extra feature): the frame raster view, computed on the same
+    // final bits as `boundaries`. `raster.detected` is false when no repeating frame
+    // structure was found; the field is always present so the GUI can show that plainly.
+    FrameRaster raster;
+
+    // Feature 3 (SIH26147 extra feature): whether soft decoding actually ran (false if
+    // it was not requested, or requested but not applicable -- FSK, or an FEC scheme
+    // with no soft decoder). `reencode_agreement` is the universal "did the decode look
+    // right" score (Section 2.3 of the feature spec): the decoded message, re-encoded,
+    // compared bit for bit against what was actually received before FEC decoding
+    // (matching_bits / total_bits); set whenever a fec_scheme was used, in either mode,
+    // so it is directly comparable between them.
+    bool soft_decoding_used = false;
+    std::optional<double> reencode_agreement;
 };
 
 // Ingest and spectrogram. Throws (std::invalid_argument / std::runtime_error)

@@ -88,6 +88,24 @@ std::vector<std::complex<float>> linear_modulate(const std::vector<uint8_t>& bit
     return out;
 }
 
+unsigned int linear_bits_per_symbol(ModulationScheme scheme) {
+    modemcf mod = modemcf_create(to_liquid_scheme(scheme));
+    const unsigned int bps = modemcf_get_bps(mod);
+    modemcf_destroy(mod);
+    return bps;
+}
+
+std::vector<std::complex<float>> linear_constellation_points(ModulationScheme scheme) {
+    modemcf mod = modemcf_create(to_liquid_scheme(scheme));
+    const unsigned int bps = modemcf_get_bps(mod);
+    std::vector<std::complex<float>> points(1u << bps);
+    for (unsigned int m = 0; m < points.size(); ++m) {
+        modemcf_modulate(mod, m, as_liquid(&points[m]));
+    }
+    modemcf_destroy(mod);
+    return points;
+}
+
 std::vector<uint8_t> linear_demodulate(const std::vector<std::complex<float>>& samples,
                                         ModulationScheme scheme) {
     if (samples.empty()) {

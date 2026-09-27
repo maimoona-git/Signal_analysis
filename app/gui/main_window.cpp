@@ -2,6 +2,7 @@
 
 #include <QDoubleValidator>
 #include <QFileDialog>
+#include <QFontDatabase>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPointer>
@@ -37,14 +38,32 @@ void MainWindow::buildUi() {
 
     results_ = new ResultsPanel;
 
+    // The SIH26147 extra-feature panels: a tab strip so each new feature (frame raster,
+    // then soft decoding, rank analysis, parameter search) gets its own page without
+    // reshaping the rest of the window as they are added.
+    feature_tabs_ = new QTabWidget;
+    auto* raster_page = new QWidget;
+    auto* raster_layout = new QVBoxLayout(raster_page);
+    raster_layout->setContentsMargins(0, 0, 0, 0);
+    frame_raster_ = new FrameRasterWidget;
+    frame_raster_text_ = new QPlainTextEdit;
+    frame_raster_text_->setReadOnly(true);
+    frame_raster_text_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    frame_raster_text_->setMaximumHeight(120);
+    raster_layout->addWidget(frame_raster_, /*stretch=*/1);
+    raster_layout->addWidget(frame_raster_text_);
+    feature_tabs_->addTab(raster_page, QStringLiteral("Frame Raster"));
+
     splitter->addWidget(plots);
     splitter->addWidget(results_);
+    splitter->addWidget(feature_tabs_);
     splitter->setStretchFactor(0, 2);
     splitter->setStretchFactor(1, 1);
+    splitter->setStretchFactor(2, 2);
     // Qt sizes an untouched splitter from the panes' size hints (the text panel's is
     // small), which gives roughly 4:1 and wraps the panel's aligned lines; the layout
-    // the stretch factors describe is 2:1, so start there (proportions survive resizes).
-    splitter->setSizes({2000, 1000});
+    // the stretch factors describe is 2:1:2, so start there (proportions survive resizes).
+    splitter->setSizes({2000, 1000, 2000});
 
     layout->addWidget(splitter);
     setCentralWidget(central);
@@ -64,6 +83,10 @@ void MainWindow::buildToolbar() {
 
     auto_detect_ = new QCheckBox(QStringLiteral("Auto-detect FEC/Interleaving"));
     toolbar->addWidget(auto_detect_);
+
+    // Feature 3 (SIH26147 extra feature): Hard/Soft decode toggle.
+    soft_decoding_ = new QCheckBox(QStringLiteral("Soft decoding"));
+    toolbar->addWidget(soft_decoding_);
 
     toolbar->addWidget(new QLabel(QStringLiteral(" Sample rate (Hz, .IQ only): ")));
     sample_rate_ = new QLineEdit;
@@ -101,6 +124,8 @@ void MainWindow::loadFile(const QString& filename, const QByteArray& bytes) {
     results_->clearText();
     waterfall_->clearData();
     constellation_->clearData();
+    frame_raster_->clearData();
+    frame_raster_text_->clear();
 }
 
 void MainWindow::runAnalysis() {
@@ -118,6 +143,7 @@ void MainWindow::runAnalysis() {
     }
     request.options.samples_per_symbol = static_cast<unsigned>(samples_per_symbol_->value());
     request.options.auto_detect = auto_detect_->isChecked();
+    request.options.soft_decoding = soft_decoding_->isChecked();
 
     statusBar()->showMessage(QStringLiteral("Running analysis..."));
     running_ = true;
@@ -153,6 +179,8 @@ void MainWindow::finishAnalysis(quint64 run_id, bool ok, std::shared_ptr<const s
     waterfall_->setData(result->spectrogram);
     constellation_->setData(result->samples);
     results_->showResult(*result);
+    frame_raster_->setData(result->raster);
+    frame_raster_text_->setPlainText(QString::fromStdString(sigapp::format_raster_text(result->raster)));
     statusBar()->showMessage(QString::fromStdString(sigapp::format_done_status(*result)));
 }
 
