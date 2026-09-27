@@ -4,15 +4,68 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PS 26147 Signal Analysis</title>
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/fonts.css">
   <style>
-    html, body { margin: 0; height: 100%; background: #f4f4f4; color: #333; font: 14px system-ui, sans-serif; }
+    /* Phase 5 (site design system): the loading/error/drop-zone chrome around
+       the Qt canvas adopts the shared tokens (site/src/styles/tokens.css,
+       copied verbatim into css/tokens.css -- edit there, not here) and
+       self-hosted IBM Plex fonts, matching /site's instrument-panel look.
+       The mounted Qt canvas itself (#screen) is untouched: it's native Qt
+       Widgets rendering, not CSS, and out of scope here (see CLAUDE.md's
+       Phase 5). No functional behaviour changed -- same ids, same JS below. */
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--ink-950);
+      color: var(--ink-text);
+      font-family: var(--font-sans);
+    }
     #screen { position: fixed; inset: 0; display: none; }
-    #status { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
-              justify-content: center; gap: .5rem; text-align: center; padding: 1rem; }
-    #status.error { color: #b00020; }
-    #status small { color: #777; max-width: 40rem; }
-    #drop { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 10;
-            background: rgba(30, 100, 200, .18); border: 3px dashed #1e64c8; font-size: 1.4rem; color: #1e64c8; pointer-events: none; }
+    #status {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-3);
+      text-align: center;
+      padding: var(--space-5);
+      font-family: var(--font-mono);
+      font-size: var(--text-lg);
+    }
+    #status::before {
+      content: "";
+      display: inline-block;
+      width: 0.6em;
+      height: 0.6em;
+      margin-right: 0.6em;
+      border-radius: 50%;
+      background: var(--phosphor);
+    }
+    #status.error { color: var(--amber); }
+    #status.error::before { background: var(--amber); }
+    #status small {
+      color: var(--muted);
+      font-family: var(--font-sans);
+      font-size: var(--text-sm);
+      max-width: 40rem;
+    }
+    #drop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      background: rgba(13, 17, 23, 0.85);
+      border: 2px dashed var(--phosphor-dim);
+      font-family: var(--font-mono);
+      font-size: var(--text-xl);
+      color: var(--phosphor);
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -21,7 +74,7 @@
        calls out to through Module.sigMlClassifier (see bridge/README.md), and (2) dropping a
        file onto the page. Everything is served from this origin, so it works offline.
        Single-threaded build: no COOP/COEP headers needed on the host. -->
-  <div id="status">Loading…<small id="detail"></small></div>
+  <div id="status">Loading PS 26147…<small id="detail"></small></div>
   <div id="screen"></div>
   <div id="drop">Drop a .wav or .IQ capture to load it</div>
 

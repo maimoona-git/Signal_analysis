@@ -11,7 +11,15 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="$(cd "${1:-$REPO_DIR/build-wasm/dist}" && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-EXPECTED="index.html
+EXPECTED="css/fonts.css
+css/tokens.css
+fonts/ibm-plex-mono-latin-400-normal.woff2
+fonts/ibm-plex-mono-latin-500-normal.woff2
+fonts/ibm-plex-mono-latin-600-normal.woff2
+fonts/ibm-plex-sans-latin-400-normal.woff2
+fonts/ibm-plex-sans-latin-500-normal.woff2
+fonts/ibm-plex-sans-latin-600-normal.woff2
+index.html
 js/onnx-classifier.mjs
 models/modulation_classifier.json
 models/modulation_classifier.onnx

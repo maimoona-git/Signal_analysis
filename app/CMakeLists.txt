@@ -36,6 +36,9 @@ if(EMSCRIPTEN)
   # cannot accumulate) and holds exactly what a plain static file server needs, nothing else:
   #
   #   index.html                 the page shell (web/index.html)
+  #   css/tokens.css, css/fonts.css   the shared design system (Phase 5: copied verbatim
+  #                               from site/src/styles/tokens.css) and self-hosted font faces
+  #   fonts/*.woff2               IBM Plex Mono/Sans, self-hosted (no external requests)
   #   sigapp.js, sigapp.wasm     the Qt app (the WASM binary and its Emscripten loader)
   #   qtloader.js                Qt's loader
   #   js/onnx-classifier.mjs     runs the ML model with onnxruntime-web (web/js)
@@ -48,7 +51,9 @@ if(EMSCRIPTEN)
   set(SIG_ORT_DIR "${PROJECT_SOURCE_DIR}/node_modules/onnxruntime-web/dist")
   set(SIG_STAGE_COMMANDS
     COMMAND ${CMAKE_COMMAND} -E remove_directory "${SIG_DIST_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${SIG_DIST_DIR}/js" "${SIG_DIST_DIR}/models" "${SIG_DIST_DIR}/vendor/ort"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${SIG_DIST_DIR}/js" "${SIG_DIST_DIR}/models" "${SIG_DIST_DIR}/vendor/ort" "${SIG_DIST_DIR}/css" "${SIG_DIST_DIR}/fonts"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/web/css" "${SIG_DIST_DIR}/css"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/web/fonts" "${SIG_DIST_DIR}/fonts"
     COMMAND ${CMAKE_COMMAND} -E copy
       "$<TARGET_FILE_DIR:sigapp>/sigapp.js"
       "$<TARGET_FILE_DIR:sigapp>/sigapp.wasm"

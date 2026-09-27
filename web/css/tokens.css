@@ -1,0 +1,93 @@
+/* Design tokens for PS 26147 — shared between /site (this file's canonical home)
+   and /web (copied in verbatim in Phase 5; do not fork the values, edit here and
+   re-copy). See /site/DESIGN.md for the research and reasoning behind these
+   choices — this file is just the values, not the "why".
+
+   Two color schemes coexist deliberately (not a light/dark toggle — a fixed
+   per-surface choice): `--scheme: dark` sections are the instrument-panel chrome
+   (nav, hero, footer), `--scheme: light` sections are long-form reading
+   (/about, /docs body copy). Components read the neutral `--surface`/`--text`/
+   `--line` roles, which each scheme redefines, rather than the raw ink/paper
+   tokens directly, so a component works correctly in either context. */
+
+:root {
+  /* Raw palette (DESIGN.md's table) -- reach for the roles below in components,
+     not these directly, except when defining a new scheme block. */
+  --ink-950: #0d1117;
+  --ink-900: #131a22;
+  --paper-50: #f7f5f0;
+  --paper-100: #ece8df;
+  --ink-text: #e8ecef;
+  --paper-text: #1b1f23;
+  --line-dark: #3a4450;
+  --line-light: #c9c2b2;
+  /* Two muted accents only, both from the amber/green phosphor-monitor family
+     (see DESIGN.md) -- no blue, navy or purple anywhere in this palette, and
+     both are dialled well below "neon": readable as an old terminal's single
+     working color, not a bright modern UI accent. */
+  --phosphor: #4f9d72;
+  --phosphor-dim: #3a7856;
+  --amber: #b8863f;
+
+  /* Type. IBM Plex Mono for headings/labels/data, IBM Plex Sans for body --
+     same family, so the two never look bolted together (see DESIGN.md). */
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-sans: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+
+  /* One modular scale (1.25 ratio) from a 16px base, shared by every page. */
+  --text-xs: 0.8rem;
+  --text-sm: 0.9rem;
+  --text-base: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.563rem;
+  --text-2xl: 1.953rem;
+  --text-3xl: 2.441rem;
+  --text-4xl: 3.052rem;
+
+  /* Spacing: an 8px-based scale, enough steps for both tight component
+     padding and full section rhythm. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4.5rem;
+
+  /* Instrument-panel chrome: sharp corners (0 radius), hairline borders, no
+     shadows -- a deliberate departure from the rounded-card-plus-soft-shadow
+     default (see DESIGN.md's "what is explicitly NOT being done"). */
+  --panel-border-width: 1px;
+  --panel-radius: 0;
+  --content-max-width: 72rem;
+  --prose-max-width: 40rem; /* keeps body copy under ~80 characters per line */
+
+  /* Fallback role values (== the light scheme): a component used outside a
+     [data-scheme] wrapper renders as light rather than invisible/transparent. */
+  --surface: var(--paper-50);
+  --surface-raised: var(--paper-100);
+  --text: var(--paper-text);
+  --muted: #6b6459;
+  --line: var(--line-light);
+}
+
+/* --- Scheme blocks: components read --surface/--text/--line/--muted, never
+   the raw ink- or paper- tokens directly, so the same component works on
+   either scheme. --- */
+
+[data-scheme="dark"] {
+  --surface: var(--ink-950);
+  --surface-raised: var(--ink-900);
+  --text: var(--ink-text);
+  --muted: #8b98a5;
+  --line: var(--line-dark);
+}
+
+[data-scheme="light"] {
+  --surface: var(--paper-50);
+  --surface-raised: var(--paper-100);
+  --text: var(--paper-text);
+  --muted: #6b6459;
+  --line: var(--line-light);
+}
