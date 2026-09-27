@@ -19,7 +19,7 @@ RankAnalysisWidget::RankAnalysisWidget(QWidget* parent) : PlotWidgetBase(parent)
     xLabel_ = QStringLiteral("Candidate codeword width (bits)");
     yLabel_ = QStringLiteral("Excess rank deficiency (bits)");
     grid_ = true;
-    view_ = QRectF(0.0, -1.0, 1.0, 2.0);
+    baseView_ = QRectF(0.0, -1.0, 1.0, 2.0);
 }
 
 void RankAnalysisWidget::setData(const sigapp::RankAnalysis& analysis) {
@@ -38,13 +38,15 @@ void RankAnalysisWidget::setData(const sigapp::RankAnalysis& analysis) {
     const double pad = std::max(1.0, (hi - lo) * 0.1);
     const double x0 = static_cast<double>(analysis_.profile.front().width);
     const double x1 = static_cast<double>(analysis_.profile.back().width);
-    view_ = QRectF(x0, lo - pad, std::max(1.0, x1 - x0), (hi - lo) + 2 * pad);
+    baseView_ = QRectF(x0, lo - pad, std::max(1.0, x1 - x0), (hi - lo) + 2 * pad);
+    resetZoom();  // a newly loaded capture starts fully zoomed out, not wherever the last one was left
     update();
 }
 
 void RankAnalysisWidget::clearData() {
     analysis_ = sigapp::RankAnalysis{};
-    view_ = QRectF(0.0, -1.0, 1.0, 2.0);
+    baseView_ = QRectF(0.0, -1.0, 1.0, 2.0);
+    resetZoom();
     update();
 }
 

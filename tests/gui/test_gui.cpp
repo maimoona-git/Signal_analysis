@@ -7,9 +7,11 @@
 #include <QElapsedTimer>
 #include <QLabel>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QToolBar>
+#include <QWheelEvent>
 
 #include <cmath>
 #include <fstream>
@@ -124,6 +126,81 @@ TEST_CASE("format_tick uses just enough decimals") {
     CHECK(format_tick(1200, 200) == "1200");
     CHECK(format_tick(0.25, 0.05) == "0.25");
     CHECK(format_tick(2.5e6, 5e5) == "2.5e+06");
+}
+
+TEST_CASE("zoom/pan: wheel zooms toward the cursor, keeping the pointed-at data point fixed") {
+    // Exercised via ConstellationWidget, but this is PlotWidgetBase's own shared
+    // behaviour -- every plot widget (waterfall, constellation, frame raster,
+    // rank analysis) gets it for free.
+    ConstellationWidget c;
+    c.setData({{1, 0}, {-1, 0}, {0, 1}, {0, -1}});
+    render(c, 400, 400);
+    CHECK_NEAR(c.zoomLevel(), 1.0, 1e-9);
+    const QRectF before = c.viewRect();
+
+    // A point off-centre, inside the plot area: zooming in should keep whatever
+    // data point is under it fixed on screen.
+    const QPointF cursor = c.plotRect().topLeft() + QPointF(20, 15);
+    const QPointF dataUnderCursorBefore = c.pixelToData(cursor);
+
+    QWheelEvent wheel(cursor, cursor, QPoint(0, 0), QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QCoreApplication::sendEvent(&c, &wheel);
+
+    CHECK(c.zoomLevel() > 1.0);
+    const QRectF after = c.viewRect();
+    CHECK(after.width() < before.width());   // zoomed in: a smaller data span is now visible
+    CHECK(after.height() < before.height());
+    const QPointF dataUnderCursorAfter = c.pixelToData(cursor);
+    CHECK_NEAR(dataUnderCursorBefore.x(), dataUnderCursorAfter.x(), 1e-6);
+    CHECK_NEAR(dataUnderCursorBefore.y(), dataUnderCursorAfter.y(), 1e-6);
+
+    // A wheel event outside the plot area (over an axis) is ignored, not zoomed.
+    const double zoom_before_stray = c.zoomLevel();
+    const QPointF outside(2, 2);
+    QWheelEvent stray(outside, outside, QPoint(0, 0), QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QCoreApplication::sendEvent(&c, &stray);
+    CHECK_NEAR(c.zoomLevel(), zoom_before_stray, 1e-9);
+}
+
+TEST_CASE("zoom/pan: dragging pans the view, and double-click resets it") {
+    ConstellationWidget c;
+    c.setData({{1, 0}, {-1, 0}, {0, 1}, {0, -1}});
+    render(c, 400, 400);
+    const QRectF original = c.viewRect();
+
+    const QPointF from = c.plotRect().center();
+    const QPointF to = from + QPointF(30, 20);
+    QMouseEvent press(QEvent::MouseButtonPress, from, from, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&c, &press);
+    QMouseEvent move(QEvent::MouseMove, to, to, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&c, &move);
+    QMouseEvent release(QEvent::MouseButtonRelease, to, to, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&c, &release);
+
+    CHECK(c.viewRect().center() != original.center());  // panned away from the original centre
+    CHECK_NEAR(c.viewRect().width(), original.width(), 1e-9);   // panning does not change the zoom level
+    CHECK_NEAR(c.zoomLevel(), 1.0, 1e-9);
+
+    QMouseEvent dbl(QEvent::MouseButtonDblClick, to, to, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&c, &dbl);
+    render(c, 400, 400);
+    CHECK_NEAR(c.zoomLevel(), 1.0, 1e-9);
+    CHECK_NEAR(c.viewRect().center().x(), original.center().x(), 1e-6);
+    CHECK_NEAR(c.viewRect().center().y(), original.center().y(), 1e-6);
+}
+
+TEST_CASE("zoom/pan: loading new data resets zoom, even if the previous capture was zoomed in") {
+    ConstellationWidget c;
+    c.setData({{1, 0}, {-1, 0}, {0, 1}, {0, -1}});
+    render(c, 400, 400);
+    const QPointF cursor = c.plotRect().center();
+    QWheelEvent wheel(cursor, cursor, QPoint(0, 0), QPoint(0, 240), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QCoreApplication::sendEvent(&c, &wheel);
+    CHECK(c.zoomLevel() > 1.0);
+
+    c.setData({{5, 5}, {-5, -5}});
+    render(c, 400, 400);
+    CHECK_NEAR(c.zoomLevel(), 1.0, 1e-9);
 }
 
 // --- waterfall --------------------------------------------------------------------
@@ -661,6 +738,48 @@ TEST_CASE("main window: the rank-analysis panel is wired to a finished analysis"
     CHECK(win.rankAnalysis()->hasData());
     CHECK(win.rankAnalysis()->analysis().width == 16);
     CHECK(win.rankAnalysisText()->toPlainText().contains("Codeword length:      16 bits"));
+}
+
+TEST_CASE("main window: the parameter-search button finds the real message auto-detect missed") {
+    // The exact bug report this feature exists to fix: a SINGLE LDPC-encoded message
+    // (nothing repeats, so a header-repeat heuristic like detect.hpp's own has nothing
+    // reliable to rank on) that auto-detect gets wrong, but the panel showed only the
+    // raw, undecoded bits (hex-encoded, since it's not printable text) -- not the real
+    // 'SIH2026!'. "Search Parameters" must find it directly.
+    StubBackend backend;
+    backend.classification = {"bpsk", 1.0};
+    MainWindow win(&backend);
+
+    sigapp::Bits stream;
+    for (unsigned char ch : std::string("SIH2026!")) {
+        sigapp::Bits byte_bits(8);
+        for (int b = 0; b < 8; ++b) byte_bits[static_cast<size_t>(b)] = (ch >> (7 - b)) & 1;
+        const auto coded = sigcore::ldpc_encode(byte_bits);
+        stream.insert(stream.end(), coded.begin(), coded.end());
+    }
+    const auto samples = sigapp::modulate(stream, "bpsk");
+    QByteArray raw(reinterpret_cast<const char*>(samples.data()), static_cast<qsizetype>(samples.size() * sizeof(samples[0])));
+    win.loadFile("single_message.iq", raw);
+    CHECK(!win.searchParamsButton()->isEnabled());  // nothing to search before an analysis has run
+
+    win.sampleRateEdit()->setText("8000");
+    win.runAnalysis();  // no auto-detect, no manual FEC: just the raw demodulated bits
+    pump();
+    CHECK(win.searchParamsButton()->isEnabled());
+    CHECK(win.paramSearchTable()->rowCount() == 0);  // not run yet
+
+    win.searchParamsButton()->click();
+    CHECK(win.paramSearchTable()->rowCount() > 0);
+    // The best candidate (row 0, auto-selected) is a real LDPC decode, and its message
+    // text is the actual original message, not a hex placeholder.
+    CHECK(win.paramSearchTable()->item(0, 1)->text() == QStringLiteral("ldpc"));
+    CHECK(win.paramSearchText()->toPlainText() == QStringLiteral("SIH2026!"));
+
+    // Loading a new file clears the search, and disables the button again.
+    win.loadFile("single_message.iq", raw);
+    CHECK(!win.searchParamsButton()->isEnabled());
+    CHECK(win.paramSearchTable()->rowCount() == 0);
+    CHECK(win.paramSearchText()->toPlainText().isEmpty());
 }
 
 TEST_CASE("main window: the panel shows exactly what the ORIGINAL GUI showed for the same run") {

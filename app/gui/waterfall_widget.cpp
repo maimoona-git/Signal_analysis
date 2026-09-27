@@ -23,7 +23,7 @@ QRgb viridis(int index) {
 WaterfallWidget::WaterfallWidget(QWidget* parent) : PlotWidgetBase(parent) {
     xLabel_ = QStringLiteral("Time (s)");
     yLabel_ = QStringLiteral("Frequency (Hz)");
-    view_ = QRectF(0.0, 0.0, 1.0, 1.0);
+    baseView_ = QRectF(0.0, 0.0, 1.0, 1.0);
 }
 
 void WaterfallWidget::setData(const sigapp::Spectrogram& s) {
@@ -70,14 +70,16 @@ void WaterfallWidget::setData(const sigapp::Spectrogram& s) {
 
     // Auto-range with pyqtgraph's default 2% padding.
     const double px = imageRect_.width() * 0.02, py = imageRect_.height() * 0.02;
-    view_ = QRectF(imageRect_.x() - px, imageRect_.y() - py, imageRect_.width() + 2 * px, imageRect_.height() + 2 * py);
+    baseView_ = QRectF(imageRect_.x() - px, imageRect_.y() - py, imageRect_.width() + 2 * px, imageRect_.height() + 2 * py);
+    resetZoom();  // a newly loaded capture starts fully zoomed out, not wherever the last one was left
     update();
 }
 
 void WaterfallWidget::clearData() {
     image_ = QImage();
     imageRect_ = QRectF();
-    view_ = QRectF(0.0, 0.0, 1.0, 1.0);
+    baseView_ = QRectF(0.0, 0.0, 1.0, 1.0);
+    resetZoom();
     update();
 }
 

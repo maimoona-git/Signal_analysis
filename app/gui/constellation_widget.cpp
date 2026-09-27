@@ -12,7 +12,7 @@ ConstellationWidget::ConstellationWidget(QWidget* parent) : PlotWidgetBase(paren
     yLabel_ = QStringLiteral("Quadrature (Q)");
     grid_ = true;
     bounds_ = QRectF(-1.0, -1.0, 2.0, 2.0);
-    view_ = bounds_;
+    baseView_ = bounds_;
 }
 
 void ConstellationWidget::setData(const std::vector<std::complex<float>>& samples, size_t max_points) {
@@ -38,12 +38,14 @@ void ConstellationWidget::setData(const std::vector<std::complex<float>>& sample
         else { const double pad = 0.02; x0 -= w * pad; y0 -= h * pad; w *= 1 + 2 * pad; h *= 1 + 2 * pad; }
         bounds_ = QRectF(x0, y0, std::max(w, 1e-12), std::max(h, 1e-12));
     }
+    resetZoom();  // a newly loaded capture starts fully zoomed out, not wherever the last one was left
     update();
 }
 
 void ConstellationWidget::clearData() {
     points_.clear();
     bounds_ = QRectF(-1.0, -1.0, 2.0, 2.0);
+    resetZoom();
     update();
 }
 
@@ -53,7 +55,7 @@ void ConstellationWidget::prepareView(const QRectF& plot) {
     const double w = std::max(bounds_.width(), 1e-12), h = std::max(bounds_.height(), 1e-12);
     const double units_per_pixel = std::max(w / plot.width(), h / plot.height());
     const double vw = units_per_pixel * plot.width(), vh = units_per_pixel * plot.height();
-    view_ = QRectF(bounds_.center().x() - vw / 2, bounds_.center().y() - vh / 2, vw, vh);
+    baseView_ = QRectF(bounds_.center().x() - vw / 2, bounds_.center().y() - vh / 2, vw, vh);
 }
 
 void ConstellationWidget::paintData(QPainter& painter) {

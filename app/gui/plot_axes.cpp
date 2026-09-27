@@ -1,6 +1,8 @@
 #include "plot_axes.hpp"
 
+#include <QMouseEvent>
 #include <QPainter>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
@@ -48,6 +50,9 @@ QString format_tick(double value, double step) {
 
 PlotWidgetBase::PlotWidgetBase(QWidget* parent) : QWidget(parent) {
     setAutoFillBackground(false);
+    setMouseTracking(false);
+    setToolTip(QStringLiteral("Scroll to zoom, drag to pan, double-click to reset"));
+    setFocusPolicy(Qt::StrongFocus);
 }
 
 QRectF PlotWidgetBase::plotRect() const {
@@ -61,12 +66,97 @@ QPointF PlotWidgetBase::dataToPixel(double x, double y) const {
                    plot.bottom() - (y - view_.y()) / view_.height() * plot.height());
 }
 
+QPointF PlotWidgetBase::pixelToData(const QPointF& pixel) const {
+    const QRectF plot = plotRect();
+    return QPointF(view_.x() + (pixel.x() - plot.left()) / plot.width() * view_.width(),
+                   view_.y() + (plot.bottom() - pixel.y()) / plot.height() * view_.height());
+}
+
+void PlotWidgetBase::applyZoom() {
+    if (!centerValid_) {
+        center_ = baseView_.center();
+        centerValid_ = true;
+    }
+    const double w = std::max(baseView_.width(), 1e-12) / zoom_;
+    const double h = std::max(baseView_.height(), 1e-12) / zoom_;
+    view_ = QRectF(center_.x() - w / 2.0, center_.y() - h / 2.0, w, h);
+}
+
+void PlotWidgetBase::resetZoom() {
+    zoom_ = 1.0;
+    centerValid_ = false;  // re-derived from baseView_ on the next applyZoom()
+    panning_ = false;
+    update();
+}
+
+void PlotWidgetBase::wheelEvent(QWheelEvent* event) {
+    const QPointF cursor = event->position();
+    if (!plotRect().contains(cursor)) {
+        event->ignore();
+        return;
+    }
+
+    const QPointF before = pixelToData(cursor);
+    const double notches = event->angleDelta().y() / 120.0;
+    zoom_ = std::clamp(zoom_ * std::pow(kWheelZoomStep, notches), kMinZoom, kMaxZoom);
+    applyZoom();
+    const QPointF after = pixelToData(cursor);
+    center_ += before - after;  // keep the point under the cursor fixed
+    applyZoom();
+
+    update();
+    event->accept();
+}
+
+void PlotWidgetBase::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && plotRect().contains(event->pos())) {
+        panning_ = true;
+        lastPanPixel_ = event->pos();
+        event->accept();
+        return;
+    }
+    QWidget::mousePressEvent(event);
+}
+
+void PlotWidgetBase::mouseMoveEvent(QMouseEvent* event) {
+    if (panning_) {
+        const QPointF before = pixelToData(QPointF(lastPanPixel_));
+        const QPointF after = pixelToData(QPointF(event->pos()));
+        center_ += before - after;
+        lastPanPixel_ = event->pos();
+        applyZoom();
+        update();
+        event->accept();
+        return;
+    }
+    QWidget::mouseMoveEvent(event);
+}
+
+void PlotWidgetBase::mouseReleaseEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && panning_) {
+        panning_ = false;
+        event->accept();
+        return;
+    }
+    QWidget::mouseReleaseEvent(event);
+}
+
+void PlotWidgetBase::mouseDoubleClickEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton) {
+        resetZoom();
+        event->accept();
+        return;
+    }
+    QWidget::mouseDoubleClickEvent(event);
+}
+
 void PlotWidgetBase::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), Qt::white);
 
     const QRectF plot = plotRect();
     prepareView(plot);
+    applyZoom();
 
     p.setRenderHint(QPainter::TextAntialiasing, true);
     QFont small = font();

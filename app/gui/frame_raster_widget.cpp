@@ -17,7 +17,7 @@ constexpr QRgb kBitZero = qRgb(0, 0, 0);
 FrameRasterWidget::FrameRasterWidget(QWidget* parent) : PlotWidgetBase(parent) {
     xLabel_ = QStringLiteral("Bit position");
     yLabel_ = QStringLiteral("Frame index");
-    view_ = QRectF(0.0, 0.0, 1.0, 1.0);
+    baseView_ = QRectF(0.0, 0.0, 1.0, 1.0);
 }
 
 void FrameRasterWidget::setData(const sigapp::FrameRaster& raster) {
@@ -48,21 +48,31 @@ void FrameRasterWidget::setData(const sigapp::FrameRaster& raster) {
         }
     }
 
-    view_ = QRectF(0.0, 0.0, static_cast<double>(f), static_cast<double>(r));
+    // Matches image_'s own pixel size exactly (r+1: the +1 is the label-strip row),
+    // so at zoom level 1 this reproduces the original "image fills the plot area"
+    // appearance pixel for pixel.
+    baseView_ = QRectF(0.0, 0.0, static_cast<double>(f), static_cast<double>(r) + 1.0);
+    resetZoom();  // a newly loaded capture starts fully zoomed out, not wherever the last one was left
     update();
 }
 
 void FrameRasterWidget::clearData() {
     raster_ = sigapp::FrameRaster{};
     image_ = QImage();
-    view_ = QRectF(0.0, 0.0, 1.0, 1.0);
+    baseView_ = QRectF(0.0, 0.0, 1.0, 1.0);
+    resetZoom();
     update();
 }
 
 void FrameRasterWidget::paintData(QPainter& painter) {
     if (image_.isNull()) return;
+    // Map the image's own data-space rect (0,0)-(f,r) through the current
+    // view/zoom, exactly like WaterfallWidget's paintData, so zooming in
+    // actually magnifies the bits instead of just relabelling the axes.
+    const QPointF top_left = dataToPixel(0.0, static_cast<double>(image_.height()));
+    const QPointF bottom_right = dataToPixel(static_cast<double>(image_.width()), 0.0);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, false);  // crisp bit blocks, not blurred
-    painter.drawImage(plotRect(), image_);
+    painter.drawImage(QRectF(top_left, bottom_right), image_);
 }
 
 }  // namespace sigui
