@@ -62,6 +62,10 @@ PipelineResult pipeline_finish(PipelinePrep prep, const Classification& classifi
 
     PipelineResult result;
     result.demodulated_bits = demodulate(*samples_for_demod, scheme, options.demod);
+    // Feature 2 (SIH26147 extra feature): blind, before anything below tries to
+    // de-interleave or decode it (both of which would remove exactly the redundancy
+    // this looks for).
+    result.rank_analysis = build_rank_analysis(result.demodulated_bits);
 
     std::optional<InterleaverSpec> interleaver = options.interleaver;
     std::optional<std::string> fec_scheme = options.fec_scheme;

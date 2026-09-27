@@ -9,6 +9,7 @@
 #include <string>
 
 #include "pipeline.hpp"
+#include "rank_analysis.hpp"
 #include "raster.hpp"
 
 namespace sigapp {
@@ -45,5 +46,11 @@ std::string format_done_status(const PipelineResult& result);
 // header composition and column labels, or a plain "nothing found" line when
 // raster.detected is false. New to this port -- there is no original-app text to match.
 std::string format_raster_text(const FrameRaster& raster);
+
+// Feature 2 (SIH26147 extra feature) panel text: detected codeword length, estimated
+// dimension and rate, windows used, or a plain "nothing found" line when
+// rank_analysis.detected is false. New to this port -- there is no original-app text to
+// match.
+std::string format_rank_analysis_text(const RankAnalysis& rank_analysis);
 
 }  // namespace sigapp

@@ -351,7 +351,7 @@ describe('runPipeline option validation and failure modes', () => {
     const r = await bridge.runPipeline(iq(), { sampleRate: 4000, samplesPerSymbol: 2 });
     assert.deepEqual(Object.keys(r).sort(), ['boundaries', 'decodedBits', 'deinterleavedBits', 'demodulatedBits', 'detectedFec',
       'detectedInterleaver', 'detectionScore', 'fileFormat', 'filePath', 'numSamples', 'predictedConfidence', 'predictedModulation',
-      'raster', 'reencodeAgreement', 'sampleRate', 'samples', 'softDecodingUsed', 'spectrogram'].sort());
+      'rankAnalysis', 'raster', 'reencodeAgreement', 'sampleRate', 'samples', 'softDecodingUsed', 'spectrogram'].sort());
     assert.equal(r.softDecodingUsed, false);
     assert.equal(r.deinterleavedBits, null);
     assert.equal(r.decodedBits, null);
@@ -361,6 +361,7 @@ describe('runPipeline option validation and failure modes', () => {
     assert.deepEqual(Object.keys(r.boundaries).sort(), ['framePeriod', 'headerPattern', 'headerPositions', 'payloads']);
     assert.deepEqual(Object.keys(r.raster).sort(),
       ['columns', 'detected', 'frameLength', 'headerColumns', 'matrix', 'numFrames', 'rowShift', 'syncPositions', 'syncWord'].sort());
+    assert.deepEqual(Object.keys(r.rankAnalysis).sort(), ['codeRate', 'detected', 'profile', 'rank', 'width', 'windowsUsed'].sort());
   });
 
   it('Feature 4: the frame raster is populated for a capture with a genuinely repeating frame', async () => {
@@ -394,5 +395,45 @@ describe('runPipeline option validation and failure modes', () => {
     assert.ok(r.raster.columns.slice(0, 8).every((c) => c.label === 'constant'));
     assert.ok(r.raster.headerColumns.length >= 8);
     assert.equal(r.raster.syncPositions.length >= 30, true);
+  });
+
+  it('Feature 2: the rank-analysis view finds the true codeword length of a clean LDPC+BPSK capture', async () => {
+    // Same LDPC(8,16) construction as the soft-decoding test above, clean (no AWGN) and
+    // with no fecScheme option this time: rank analysis is meant to find the code BLIND,
+    // before any decode is attempted, so it must not need fecScheme/fecMsgLen at all.
+    let seed = 71;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const kK = 8, kM = 8;
+    const h1 = Array.from({ length: kM }, () => new Array(kK).fill(0));
+    for (let j = 0; j < kK; j++) for (const r of [(j * 3 + 1) % kM, (j * 5 + 2) % kM, (j * 2 + 7) % kM]) h1[r][j] = 1;
+    const encodeBlock = (block) => {
+      const codeword = block.slice();
+      const parity = new Array(kM).fill(0);
+      for (let r = 0; r < kM; r++) {
+        let acc = 0;
+        for (let j = 0; j < kK; j++) acc ^= (h1[r][j] & block[j]);
+        if (r > 0) acc ^= parity[r - 1];
+        parity[r] = acc;
+      }
+      return codeword.concat(parity);
+    };
+    let coded = [];
+    for (let b = 0; b < 300; b++) {
+      const block = Array.from({ length: kK }, () => (rnd() < 0.5 ? 0 : 1));
+      coded = coded.concat(encodeBlock(block));
+    }
+    const n = coded.length;
+    const samples = new Float32Array(2 * n);
+    for (let i = 0; i < n; i++) { samples[2 * i] = coded[i] ? -1 : 1; samples[2 * i + 1] = 0; }
+    const file = new File([samples.buffer], 'rank.iq');
+
+    const r = await bridge.runPipeline(file, { sampleRate: 8000 });
+    assert.equal(r.rankAnalysis.detected, true);
+    assert.equal(r.rankAnalysis.width, 16);
+    assert.ok(r.rankAnalysis.rank >= 7 && r.rankAnalysis.rank <= 9);
+    assert.ok(r.rankAnalysis.codeRate > 0.4 && r.rankAnalysis.codeRate < 0.65);
+    assert.ok(Array.isArray(r.rankAnalysis.profile) && r.rankAnalysis.profile.length > 0);
+    assert.deepEqual(Object.keys(r.rankAnalysis.profile[0]).sort(),
+      ['baselineDeficiency', 'excessDeficiency', 'rank', 'width'].sort());
   });
 });

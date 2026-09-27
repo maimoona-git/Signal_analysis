@@ -14,6 +14,7 @@
 #include "analysis_backend.hpp"
 #include "constellation_widget.hpp"
 #include "frame_raster_widget.hpp"
+#include "rank_analysis_widget.hpp"
 #include "results_panel.hpp"
 #include "waterfall_widget.hpp"
 
@@ -53,6 +54,9 @@ public:
     QTabWidget* featureTabs() const { return feature_tabs_; }
     FrameRasterWidget* frameRaster() const { return frame_raster_; }
     QPlainTextEdit* frameRasterText() const { return frame_raster_text_; }
+    // Feature 2 (SIH26147 extra feature): the rank-analysis view's tab.
+    RankAnalysisWidget* rankAnalysis() const { return rank_analysis_; }
+    QPlainTextEdit* rankAnalysisText() const { return rank_analysis_text_; }
     QAction* openAction() const { return open_action_; }
     QAction* runAction() const { return run_action_; }
     QCheckBox* autoDetectCheckBox() const { return auto_detect_; }
@@ -78,6 +82,8 @@ private:
     QTabWidget* feature_tabs_ = nullptr;
     FrameRasterWidget* frame_raster_ = nullptr;
     QPlainTextEdit* frame_raster_text_ = nullptr;
+    RankAnalysisWidget* rank_analysis_ = nullptr;
+    QPlainTextEdit* rank_analysis_text_ = nullptr;
     QAction* open_action_ = nullptr;
     QAction* run_action_ = nullptr;
     QCheckBox* auto_detect_ = nullptr;

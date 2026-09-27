@@ -18,7 +18,9 @@
 #include <vector>
 
 #include "main_window.hpp"
+#include "fec.hpp"
 #include "frame_raster_widget.hpp"
+#include "rank_analysis_widget.hpp"
 #include "result_text.hpp"
 #include "../harness.hpp"
 #include "../record_file.hpp"
@@ -359,6 +361,50 @@ TEST_CASE("frame raster: no detection shows an empty picture, not a guess") {
     CHECK(pixel_at(rendered, w.plotRect().center()) == qRgb(255, 255, 255));
 }
 
+// --- rank analysis (Feature 2) -----------------------------------------------------
+
+TEST_CASE("rank analysis: draws a profile line, a threshold line, and marks the spike") {
+    sigapp::RankAnalysis a;
+    a.detected = true;
+    a.width = 16;
+    a.rank = 8.0;
+    a.code_rate = 0.5;
+    a.windows_used = 3;
+    for (unsigned w = 8; w <= 24; ++w) {
+        sigapp::RankProfilePoint p;
+        p.width = w;
+        p.excess_deficiency = (w == 16) ? 10.0 : 0.1;
+        a.profile.push_back(p);
+    }
+
+    RankAnalysisWidget widget;
+    widget.setData(a);
+    CHECK(widget.hasData());
+    CHECK(widget.analysis().width == 16);
+
+    const QImage rendered = render(widget, 400, 300);
+    const QRectF plot = widget.plotRect();
+    // Something other than plain white was drawn inside the plot area (the profile
+    // line, the threshold line, and the spike marker all have to land somewhere).
+    bool any_ink = false;
+    for (int x = static_cast<int>(plot.left()) + 1; x < static_cast<int>(plot.right()); x += 5) {
+        if (pixel_at(rendered, QPointF(x, plot.center().y())) != qRgb(255, 255, 255)) any_ink = true;
+    }
+    CHECK(any_ink);
+
+    widget.clearData();
+    CHECK(!widget.hasData());
+    CHECK(widget.analysis().profile.empty());
+}
+
+TEST_CASE("rank analysis: no detection shows an empty profile, not a guess") {
+    RankAnalysisWidget widget;
+    sigapp::RankAnalysis none;  // detected = false, profile empty, by default
+    widget.setData(none);
+    CHECK(!widget.hasData());
+    CHECK(widget.analysis().profile.empty());
+}
+
 // --- results panel ----------------------------------------------------------------
 
 TEST_CASE("results panel is read-only and shows results, errors and nothing") {
@@ -578,6 +624,43 @@ TEST_CASE("main window: the frame raster panel is wired to a finished analysis")
     CHECK(win.frameRaster()->image().width() == 32);
     CHECK(win.frameRasterText()->toPlainText().contains("Frame length:         32 bits"));
     CHECK(win.frameRasterText()->toPlainText().contains("Sync word:            10110010"));
+}
+
+TEST_CASE("main window: the rank-analysis panel is wired to a finished analysis") {
+    // fsk_plain.iq has no linear block code in it: the panel must honestly show "not
+    // detected", not a guess, confirming the wiring reaches both outcomes.
+    StubBackend backend;
+    backend.classification = {"fsk", 1.0};
+    MainWindow win(&backend);
+    win.loadFile("fsk_plain.iq", demo_bytes("fsk_plain.iq"));
+    CHECK(!win.rankAnalysis()->hasData());  // cleared on load, before any analysis
+    win.sampleRateEdit()->setText("8000");
+    win.runAnalysis();
+    pump();
+    CHECK(!win.rankAnalysis()->hasData());
+    CHECK(win.rankAnalysisText()->toPlainText().toStdString() ==
+          sigapp::format_rank_analysis_text(backend.last_result->rank_analysis));
+    CHECK(win.rankAnalysisText()->toPlainText().contains("No rank-deficiency spike detected"));
+
+    // A real LDPC(16,8) codeword stream: the panel picks up its true width and rate.
+    sigapp::Bits stream;
+    Rng rng(61);
+    for (unsigned b = 0; b < 300; ++b) {
+        const auto msg = random_bits(8, static_cast<uint64_t>(rng.next()));
+        const auto coded = sigcore::ldpc_encode(msg);
+        stream.insert(stream.end(), coded.begin(), coded.end());
+    }
+    const auto samples = sigapp::modulate(stream, "bpsk");
+    QByteArray raw(reinterpret_cast<const char*>(samples.data()), static_cast<qsizetype>(samples.size() * sizeof(samples[0])));
+    win.loadFile("rank.iq", raw);
+    win.sampleRateEdit()->setText("8000");
+    backend.classification = {"bpsk", 1.0};
+    win.runAnalysis();
+    pump();
+
+    CHECK(win.rankAnalysis()->hasData());
+    CHECK(win.rankAnalysis()->analysis().width == 16);
+    CHECK(win.rankAnalysisText()->toPlainText().contains("Codeword length:      16 bits"));
 }
 
 TEST_CASE("main window: the panel shows exactly what the ORIGINAL GUI showed for the same run") {

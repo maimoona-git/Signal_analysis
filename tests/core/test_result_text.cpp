@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "rank_analysis.hpp"
 #include "raster.hpp"
 #include "result_text.hpp"
 #include "../harness.hpp"
@@ -221,6 +222,27 @@ TEST_CASE("format_result_text: soft-decoding info is opt-in and does not disturb
     r.reencode_agreement = std::nullopt;
     CHECK(format_result_text(r, SIZE_MAX, true).find("Decoding mode:") == std::string::npos);
     CHECK(format_result_text(r, SIZE_MAX, true).find("Re-encode agreement:") == std::string::npos);
+}
+
+// Feature 2: format_rank_analysis_text (new to this port, no original-app text to match).
+TEST_CASE("format_rank_analysis_text: not detected, and a detected spike") {
+    RankAnalysis none;
+    CHECK(format_rank_analysis_text(none) ==
+          "No rank-deficiency spike detected: try a longer capture, or supply a "
+          "candidate codeword width if one is known.");
+
+    RankAnalysis r;
+    r.detected = true;
+    r.width = 16;
+    r.rank = 8.0;
+    r.code_rate = 0.5;
+    r.windows_used = 25;
+
+    const std::string text = format_rank_analysis_text(r);
+    CHECK(text.find("Codeword length:      16 bits") != std::string::npos);
+    CHECK(text.find("Estimated dimension:  8.0 bits") != std::string::npos);
+    CHECK(text.find("Estimated code rate:  0.500") != std::string::npos);
+    CHECK(text.find("Windows analysed:     25") != std::string::npos);
 }
 
 TEST_MAIN()

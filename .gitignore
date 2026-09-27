@@ -19,3 +19,7 @@ ml/checkpoints/
 .vscode/
 .idea/
 .DS_Store
+
+# Local working notes: a running build log kept for continuity across sessions,
+# not part of the repo (untracked on purpose; do not re-add).
+CLAUDE.md

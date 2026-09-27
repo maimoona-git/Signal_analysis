@@ -278,6 +278,27 @@ val raster_out(const sigapp::FrameRaster& r) {
     return out;
 }
 
+// Feature 2 (SIH26147 extra feature): the rank-analysis view.
+val rank_analysis_out(const sigapp::RankAnalysis& r) {
+    val out = val::object();
+    out.set("detected", r.detected);
+    out.set("width", r.width);
+    out.set("rank", r.rank);
+    out.set("codeRate", r.code_rate);
+    out.set("windowsUsed", r.windows_used);
+    val profile = val::array();
+    for (const auto& p : r.profile) {
+        val entry = val::object();
+        entry.set("width", p.width);
+        entry.set("rank", p.rank);
+        entry.set("baselineDeficiency", p.baseline_deficiency);
+        entry.set("excessDeficiency", p.excess_deficiency);
+        profile.call<void>("push", entry);
+    }
+    out.set("profile", profile);
+    return out;
+}
+
 val pipeline_result_to_js(const sigapp::PipelineResult& r) {
     val out = val::object();
     out.set("filePath", r.file_path);
@@ -317,6 +338,7 @@ val pipeline_result_to_js(const sigapp::PipelineResult& r) {
     out.set("softDecodingUsed", r.soft_decoding_used);
     out.set("reencodeAgreement", r.reencode_agreement ? val(*r.reencode_agreement) : val::null());
     out.set("raster", raster_out(r.raster));
+    out.set("rankAnalysis", rank_analysis_out(r.rank_analysis));
     return out;
 }
 

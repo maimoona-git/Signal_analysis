@@ -25,6 +25,7 @@
 #include "correlate.hpp"
 #include "demod_dispatch.hpp"
 #include "interleave_dispatch.hpp"
+#include "rank_analysis.hpp"
 #include "raster.hpp"
 #include "signal_io.hpp"
 
@@ -100,6 +101,13 @@ struct PipelineResult {
     // final bits as `boundaries`. `raster.detected` is false when no repeating frame
     // structure was found; the field is always present so the GUI can show that plainly.
     FrameRaster raster;
+
+    // Feature 2 (SIH26147 extra feature): the rank-analysis view, computed BLIND on the
+    // raw demodulated bits (before de-interleaving or FEC decode -- decoding removes the
+    // very redundancy this looks for). `rank_analysis.detected` is false when no width's
+    // rank deficiency clears the statistical floor; the field is always present so the
+    // GUI can show that plainly, same convention as `raster`.
+    RankAnalysis rank_analysis;
 
     // Feature 3 (SIH26147 extra feature): whether soft decoding actually ran (false if
     // it was not requested, or requested but not applicable -- FSK, or an FEC scheme

@@ -54,6 +54,18 @@ void MainWindow::buildUi() {
     raster_layout->addWidget(frame_raster_text_);
     feature_tabs_->addTab(raster_page, QStringLiteral("Frame Raster"));
 
+    auto* rank_page = new QWidget;
+    auto* rank_layout = new QVBoxLayout(rank_page);
+    rank_layout->setContentsMargins(0, 0, 0, 0);
+    rank_analysis_ = new RankAnalysisWidget;
+    rank_analysis_text_ = new QPlainTextEdit;
+    rank_analysis_text_->setReadOnly(true);
+    rank_analysis_text_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    rank_analysis_text_->setMaximumHeight(120);
+    rank_layout->addWidget(rank_analysis_, /*stretch=*/1);
+    rank_layout->addWidget(rank_analysis_text_);
+    feature_tabs_->addTab(rank_page, QStringLiteral("Rank Analysis"));
+
     splitter->addWidget(plots);
     splitter->addWidget(results_);
     splitter->addWidget(feature_tabs_);
@@ -126,6 +138,8 @@ void MainWindow::loadFile(const QString& filename, const QByteArray& bytes) {
     constellation_->clearData();
     frame_raster_->clearData();
     frame_raster_text_->clear();
+    rank_analysis_->clearData();
+    rank_analysis_text_->clear();
 }
 
 void MainWindow::runAnalysis() {
@@ -181,6 +195,8 @@ void MainWindow::finishAnalysis(quint64 run_id, bool ok, std::shared_ptr<const s
     results_->showResult(*result);
     frame_raster_->setData(result->raster);
     frame_raster_text_->setPlainText(QString::fromStdString(sigapp::format_raster_text(result->raster)));
+    rank_analysis_->setData(result->rank_analysis);
+    rank_analysis_text_->setPlainText(QString::fromStdString(sigapp::format_rank_analysis_text(result->rank_analysis)));
     statusBar()->showMessage(QString::fromStdString(sigapp::format_done_status(*result)));
 }
 

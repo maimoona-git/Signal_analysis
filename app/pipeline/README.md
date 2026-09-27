@@ -60,6 +60,50 @@ The port reproduces the original's behaviour, not an idealised version of it:
 Fixing any of these is a deliberate decision to diverge from the native app;
 do it in both projects, then regenerate the fixtures.
 
+## Feature 2 (SIH26147 extra feature): rank-analysis view
+
+`rank_analysis.hpp`/`rank_analysis.cpp` find a linear block code's length BLIND, with no
+knowledge of the FEC scheme and no decode attempt: fold the bitstream into an R x W
+matrix for a range of candidate widths W and compute its rank over GF(2). A width that
+is not a real code boundary folds essentially independent rows; a width that IS the
+codeword length folds every row into the same k-dimensional code subspace, so the rank
+saturates at k long before W rows have been seen -- an excess rank *deficit* that stands
+out. Where it appears is the code length; the rank there estimates the dimension, so
+rank/width estimates the code rate. Runs on `PipelineResult::demodulated_bits`, before
+de-interleaving or decoding either one, since decoding removes exactly the redundancy
+this looks for.
+
+**The random baseline is a real floor, not zero — found while building this, not
+assumed:** a random GF(2) matrix is surprisingly often *not* full rank (corank 0 happens
+only ~29% of the time for a square one); the expected corank converges quickly to a
+known constant, ~0.7869, independent of matrix size once the smaller dimension isn't
+tiny. Comparing against a flat zero floor would flag nearly every width as "deficient"
+from this alone; every width's excess here is measured against
+`baseline_deficiency(rows, width) = max(0, width - rows) + 0.7869` instead, and that
+excess's own tail decays extremely fast (unlike Feature 4's autocorrelation, this does
+not need to scale with capture size), so a small absolute threshold (3 bits, by default)
+is already a safe one.
+
+**Known limitation, found while measuring this, not assumed:** bit errors are far more
+damaging here than to the frame raster. A single flipped bit in one row can, on its own,
+add one whole new independent dimension to the observed rank. Measured on a real
+LDPC(16,8) codeword stream (8 redundant bits — real headroom, not a toy code): a per-bit
+error rate of as little as 0.5%, applied independently across a few thousand rows in one
+big matrix, already erases the spike; by 2% it is gone. `RankAnalysisOptions::
+window_rows` splits the rows into many small windows and takes the *median* rank across
+them instead of one big elimination -- a window untouched by an error still reports the
+true rank exactly, and the median survives a minority of corrupted windows outvoting the
+rest, but this is a real, bounded mitigation, not a fix: it needs a majority of windows
+to stay clean, and does nothing for a capture where errors are spread evenly through
+every window (`test_rank_analysis.cpp`'s "honest limit" test measures, rather than
+asserts, that the unwindowed default is worse on exactly the same corrupted stream).
+
+**No offset search:** folding always starts at bit 0, the same assumption the rest of
+the pipeline already makes (`find_header_payload_boundaries` looks for its header from
+the start of the stream too). A capture whose first codeword does not begin at bit 0
+will not show a clean spike; phase synchronization is a possible extension, not
+implemented here.
+
 ## Feature 4 (SIH26147 extra feature): frame raster view
 
 `raster.hpp`/`raster.cpp` find the repeating frame length (autocorrelation, smallest

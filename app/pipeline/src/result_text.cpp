@@ -164,4 +164,18 @@ std::string format_raster_text(const FrameRaster& raster) {
     return t;
 }
 
+std::string format_rank_analysis_text(const RankAnalysis& r) {
+    if (!r.detected) {
+        return "No rank-deficiency spike detected: try a longer capture, or supply a "
+               "candidate codeword width if one is known.";
+    }
+    std::string t;
+    auto line = [&](const std::string& s) { t += s + "\n"; };
+    line("Codeword length:      " + std::to_string(r.width) + " bits");
+    line("Estimated dimension:  " + printf_string("%.1f", r.rank) + " bits");
+    line("Estimated code rate:  " + printf_string("%.3f", r.code_rate));
+    t += "Windows analysed:     " + std::to_string(r.windows_used);
+    return t;
+}
+
 }  // namespace sigapp
