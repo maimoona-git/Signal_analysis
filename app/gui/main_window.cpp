@@ -3,14 +3,18 @@
 #include <QDoubleValidator>
 #include <QFileDialog>
 #include <QFontDatabase>
+#include <QHeaderView>
 #include <QLabel>
+#include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QPointer>
-#include <QSplitter>
 #include <QStatusBar>
+#include <QTableWidgetItem>
 #include <QToolBar>
 #include <QVBoxLayout>
 
+#include "correlate.hpp"
 #include "error_text.hpp"
 #include "result_text.hpp"
 
@@ -19,23 +23,29 @@ namespace sigui {
 MainWindow::MainWindow(AnalysisBackend* backend, QWidget* parent) : QMainWindow(parent), backend_(backend) {
     setWindowTitle(QStringLiteral("PS 26147 - Signal Analysis Tool"));
     resize(1100, 700);
+    setDockNestingEnabled(true);
     buildUi();
     buildToolbar();
+    buildViewMenu();
     statusBar()->showMessage(QStringLiteral("Open a .wav or .IQ file to begin."));
 }
 
+// Builds a dock widget but does not place it in the layout -- buildUi() does that
+// itself, via addDockWidget or splitDockWidget, so that a dock is only ever inserted
+// into the layout tree once (inserting it once with addDockWidget and again with
+// splitDockWidget left the layout's internal tree confused about which node governed
+// each panel's width, and resizeDocks' proportions came out wrong as a result).
+QDockWidget* MainWindow::makePanelDock(const QString& title, QWidget* content) {
+    auto* dock = new QDockWidget(title, this);
+    dock->setObjectName(title);  // so state can be saved/restored by name, not just position
+    dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetClosable);
+    dock->setWidget(content);
+    return dock;
+}
+
 void MainWindow::buildUi() {
-    auto* central = new QWidget(this);
-    auto* layout = new QVBoxLayout(central);
-
-    auto* splitter = new QSplitter(Qt::Horizontal);
-
-    auto* plots = new QSplitter(Qt::Vertical);
     waterfall_ = new WaterfallWidget;
     constellation_ = new ConstellationWidget;
-    plots->addWidget(waterfall_);
-    plots->addWidget(constellation_);
-
     results_ = new ResultsPanel;
 
     // The SIH26147 extra-feature panels: a tab strip so each new feature (frame raster,
@@ -66,19 +76,78 @@ void MainWindow::buildUi() {
     rank_layout->addWidget(rank_analysis_text_);
     feature_tabs_->addTab(rank_page, QStringLiteral("Rank Analysis"));
 
-    splitter->addWidget(plots);
-    splitter->addWidget(results_);
-    splitter->addWidget(feature_tabs_);
-    splitter->setStretchFactor(0, 2);
-    splitter->setStretchFactor(1, 1);
-    splitter->setStretchFactor(2, 2);
-    // Qt sizes an untouched splitter from the panes' size hints (the text panel's is
-    // small), which gives roughly 4:1 and wraps the panel's aligned lines; the layout
-    // the stretch factors describe is 2:1:2, so start there (proportions survive resizes).
-    splitter->setSizes({2000, 1000, 2000});
+    // Feature 1 (SIH26147 extra feature, descoped): decode-driven parameter search.
+    // Unlike the tabs above, nothing here runs automatically -- see searchParamsButton's
+    // own doc comment on why -- so this tab starts with just a button and fills in once
+    // it is pressed.
+    auto* search_page = new QWidget;
+    auto* search_layout = new QVBoxLayout(search_page);
+    search_layout->setContentsMargins(0, 0, 0, 0);
+    search_params_button_ = new QPushButton(QStringLiteral("Search Parameters"));
+    search_params_button_->setEnabled(false);
+    connect(search_params_button_, &QPushButton::clicked, this, [this] { runParamSearch(); });
+    param_search_table_ = new QTableWidget(0, 4);
+    param_search_table_->setHorizontalHeaderLabels(
+        {QStringLiteral("Confidence"), QStringLiteral("FEC"), QStringLiteral("Interleaver"), QStringLiteral("Offset")});
+    param_search_table_->horizontalHeader()->setStretchLastSection(true);
+    param_search_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    param_search_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    param_search_table_->setSelectionMode(QAbstractItemView::SingleSelection);
+    connect(param_search_table_, &QTableWidget::currentCellChanged, this,
+           [this](int row, int, int, int) { showParamSearchCandidate(row); });
+    param_search_text_ = new QPlainTextEdit;
+    param_search_text_->setReadOnly(true);
+    param_search_text_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    param_search_text_->setMaximumHeight(120);
+    search_layout->addWidget(search_params_button_);
+    search_layout->addWidget(param_search_table_, /*stretch=*/1);
+    search_layout->addWidget(param_search_text_);
+    feature_tabs_->addTab(search_page, QStringLiteral("Parameter Search"));
 
-    layout->addWidget(splitter);
-    setCentralWidget(central);
+    // Default arrangement matches the old fixed layout -- waterfall above constellation
+    // on the left, results and features on the right -- but every panel here can be
+    // dragged to a new spot, floated into its own window, or closed (buildViewMenu()
+    // adds a way to bring a closed one back).
+    waterfall_dock_ = makePanelDock(QStringLiteral("Waterfall"), waterfall_);
+    constellation_dock_ = makePanelDock(QStringLiteral("Constellation"), constellation_);
+    results_dock_ = makePanelDock(QStringLiteral("Results"), results_);
+    features_dock_ = makePanelDock(QStringLiteral("Features"), feature_tabs_);
+
+    addDockWidget(Qt::LeftDockWidgetArea, waterfall_dock_);
+    splitDockWidget(waterfall_dock_, constellation_dock_, Qt::Vertical);
+    addDockWidget(Qt::RightDockWidgetArea, results_dock_);
+    splitDockWidget(results_dock_, features_dock_, Qt::Horizontal);
+}
+
+void MainWindow::showEvent(QShowEvent* event) {
+    QMainWindow::showEvent(event);
+    if (docks_sized_) return;
+    docks_sized_ = true;
+    // resizeDocks() only sticks once the window has an established layout -- called
+    // any earlier (e.g. from buildUi(), during construction), Qt's initial show
+    // discards the hint and lays panels out from their size hints instead, which is
+    // roughly 4:1 rather than the 2:1 this mirrors from the old QSplitter code's own
+    // {2000, 1000, 2000} (proportions that large, not just "2, 1, 2", to dominate
+    // each panel's own minimum size hint).
+    // Queued, not applied directly here: the window's very first show triggers its own
+    // internal layout pass (from each panel's size hint) shortly after showEvent fires,
+    // which otherwise wins the race and overwrites a hint set synchronously here.
+    QPointer<MainWindow> self(this);
+    QMetaObject::invokeMethod(this, [self] {
+        if (self) self->applyDockProportions();
+    }, Qt::QueuedConnection);
+}
+
+void MainWindow::applyDockProportions() {
+    resizeDocks({waterfall_dock_, results_dock_, features_dock_}, {2000, 1000, 2000}, Qt::Horizontal);
+    resizeDocks({waterfall_dock_, constellation_dock_}, {2000, 1000}, Qt::Vertical);
+}
+
+void MainWindow::buildViewMenu() {
+    QMenu* view = menuBar()->addMenu(QStringLiteral("View"));
+    for (QDockWidget* dock : {waterfall_dock_, constellation_dock_, results_dock_, features_dock_}) {
+        view->addAction(dock->toggleViewAction());
+    }
 }
 
 void MainWindow::buildToolbar() {
@@ -140,6 +209,11 @@ void MainWindow::loadFile(const QString& filename, const QByteArray& bytes) {
     frame_raster_text_->clear();
     rank_analysis_->clearData();
     rank_analysis_text_->clear();
+    last_result_.reset();
+    param_search_result_ = sigapp::ParamSearchResult{};
+    param_search_table_->setRowCount(0);
+    param_search_text_->clear();
+    search_params_button_->setEnabled(false);
 }
 
 void MainWindow::runAnalysis() {
@@ -197,7 +271,58 @@ void MainWindow::finishAnalysis(quint64 run_id, bool ok, std::shared_ptr<const s
     frame_raster_text_->setPlainText(QString::fromStdString(sigapp::format_raster_text(result->raster)));
     rank_analysis_->setData(result->rank_analysis);
     rank_analysis_text_->setPlainText(QString::fromStdString(sigapp::format_rank_analysis_text(result->rank_analysis)));
+    last_result_ = result;
+    param_search_result_ = sigapp::ParamSearchResult{};
+    param_search_table_->setRowCount(0);
+    param_search_text_->clear();
+    search_params_button_->setEnabled(true);
     statusBar()->showMessage(QString::fromStdString(sigapp::format_done_status(*result)));
+}
+
+void MainWindow::runParamSearch() {
+    if (!last_result_) return;
+    statusBar()->showMessage(QStringLiteral("Searching parameters..."));
+    // Synchronous: search_params is plain C++ with no ML call-out, but it is real work
+    // (many interleaver x FEC combinations, each with its own FEC decode attempt), so
+    // this can take a noticeable moment on a large capture -- see param_search.hpp's
+    // own performance note. It runs only when this button is pressed, never
+    // automatically, for exactly that reason.
+    param_search_result_ = sigapp::search_params(last_result_->demodulated_bits);
+
+    const auto& candidates = param_search_result_.candidates;
+    param_search_table_->setRowCount(static_cast<int>(candidates.size()));
+    for (int row = 0; row < static_cast<int>(candidates.size()); ++row) {
+        const auto& c = candidates[static_cast<size_t>(row)];
+        param_search_table_->setItem(row, 0, new QTableWidgetItem(QString::number(c.confidence, 'f', 3)));
+        param_search_table_->setItem(row, 1, new QTableWidgetItem(c.fec ? QString::fromStdString(*c.fec) : QStringLiteral("none")));
+        param_search_table_->setItem(row, 2, new QTableWidgetItem(c.interleaver ? QString::fromStdString(c.interleaver->kind) : QStringLiteral("none")));
+        param_search_table_->setItem(row, 3, new QTableWidgetItem(QString::number(c.bit_offset)));
+    }
+    if (!candidates.empty()) {
+        param_search_table_->selectRow(static_cast<int>(param_search_result_.best_index));
+    } else {
+        param_search_text_->clear();
+    }
+    statusBar()->showMessage(param_search_result_.detected
+                                 ? QStringLiteral("Parameter search: %1 candidates, best confidence %2.")
+                                       .arg(candidates.size())
+                                       .arg(QString::number(candidates[param_search_result_.best_index].confidence, 'f', 3))
+                                 : QStringLiteral("Parameter search: no candidate cleared the confidence floor."));
+}
+
+void MainWindow::showParamSearchCandidate(int row) {
+    if (!last_result_ || row < 0 || row >= static_cast<int>(param_search_result_.candidates.size())) {
+        param_search_text_->clear();
+        return;
+    }
+    const auto& c = param_search_result_.candidates[static_cast<size_t>(row)];
+    try {
+        const auto decoded = sigapp::decode_candidate(last_result_->demodulated_bits, c);
+        param_search_text_->setPlainText(QString::fromStdString(sigapp::bits_to_text(decoded)));
+    } catch (const std::exception& e) {
+        param_search_text_->setPlainText(QStringLiteral("(could not decode this candidate: %1)")
+                                             .arg(QString::fromStdString(sigbridge::describe_exception(e))));
+    }
 }
 
 void MainWindow::failAnalysis(const QString& message) {
