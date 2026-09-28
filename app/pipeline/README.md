@@ -60,6 +60,56 @@ The port reproduces the original's behaviour, not an idealised version of it:
 Fixing any of these is a deliberate decision to diverge from the native app;
 do it in both projects, then regenerate the fixtures.
 
+## Feature 1 (SIH26147 extra feature, descoped): decode-driven parameter search
+
+`param_search.hpp`/`param_search.cpp` try every (bit offset x interleaver x FEC)
+combination against the raw demodulated bits and rank ALL of them by how much a
+decode looks *correct* -- not by how often a header happens to repeat, which is what
+`detect.hpp`'s existing heuristic does (and does well, for a message that repeats:
+that module is left completely unchanged here, still matching the original app
+decision for decision). "Correct" reuses Feature 3's own re-encode-and-compare metric
+(`reencode_agreement`): decode, re-encode, and see how much of what was actually
+received comes back.
+
+**The bug this exists to fix, found during this port's own testing:** a real report
+during testing -- a single LDPC-encoded message, no repeats at all -- showed the
+results panel a hex-encoded blob instead of the real text. Tracing it back: with
+nothing to repeat, `detect.hpp`'s header-repeat score has nothing reliable to rank on,
+and picked "no FEC" over a genuinely-decodable LDPC hypothesis on exactly that kind of
+one-shot capture. This search's ranking is built to not have that gap: a real decode
+match is the primary signal, and a header-repeat count is used only as a fallback for
+candidates with no FEC hypothesis to check at all, deliberately capped well below any
+score a real decode could report (see `test_param_search.cpp`'s test of that exact
+scenario).
+
+**Every FEC decoder needs its own noise baseline, found by measuring, not assumed:**
+Viterbi and LDPC both always produce SOME output for any input at all (a
+nearest-codeword / best-effort search), so decoding pure noise then re-encoding it
+still agrees with that noise far more than a naive "agreement > 50%" floor would
+expect -- measured (on nonlinear-mixed bits, not testutil's own linear xorshift Rng;
+see test_param_search.cpp's own note on why that specific choice matters here) at
+~87% for Viterbi and ~59-72% for LDPC, purely from random input. Reed-Solomon and
+concatenated mostly just THROW on pure noise instead (self-filtering: RS(15,13) can
+only correct one symbol error per block, and random data essentially never satisfies
+that). Confidence is normalised against each scheme's own measured baseline
+(`noise_baseline` in param_search.cpp), not a flat threshold, exactly the same lesson
+Feature 2 learned from GF(2) rank's own non-zero random baseline.
+
+**Descoped, like the rest of this port's extra features:** the feature spec's fuller
+version implies a blind receiver front end (searching modulation and sample rate too).
+This pipeline has no timing recovery or pulse shaping to search over -- modulation and
+sample rate are given here exactly as everywhere else -- so this searches interleaver,
+FEC, and a small bit-offset ("phase") window instead, which is the part that is
+actually missing from `detect.hpp`'s own search.
+
+**Cost, and why it is opt-in, not automatic like Features 2 and 4:** every candidate
+costs a real interleave + FEC decode + re-encode attempt, and there are a lot of them
+(measured: ~3.4s natively at the default 200,000-bit cap, offset search included makes
+it worse). Unlike the always-on raster/rank-analysis views, this only runs when the
+GUI's "Search Parameters" button is pressed, on the last analysis' raw demodulated
+bits -- exactly the situation it exists for (auto-detect's single guess turned out
+wrong), not every run.
+
 ## Feature 2 (SIH26147 extra feature): rank-analysis view
 
 `rank_analysis.hpp`/`rank_analysis.cpp` find a linear block code's length BLIND, with no

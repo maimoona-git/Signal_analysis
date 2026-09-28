@@ -132,4 +132,37 @@ export class SigBridge {
   get pendingClassifications() {
     return this.module.mlPendingCount();
   }
+
+  /**
+   * Feature 1 (SIH26147 extra feature, descoped): decode-driven parameter search.
+   * Tries every (bit offset x interleaver x FEC) combination against `bits` (typically
+   * a result's `demodulatedBits`, BEFORE any de-interleave/decode: decoding a code
+   * removes exactly the redundancy this looks for) and ranks all of them by how much a
+   * decode looks correct (the same re-encode-and-compare metric as `reencodeAgreement`
+   * elsewhere), not by how often a header happens to repeat -- see
+   * app/pipeline/param_search.hpp's own comment for why that matters. Synchronous (no
+   * ML call-out involved).
+   *
+   *   options.maxBitOffset     try offsets [0, maxBitOffset] too (default 0: offset 0 only)
+   *   options.confidenceFloor  a confidence at or above this counts as `detected` (default 0.5)
+   *
+   * Resolves to { detected, bestIndex, candidates: [{ bitOffset, interleaver, fec,
+   * fecMsgLen, reencodeAgreement, headerRepeatScore, confidence, decodedBits }, ...] }
+   * (candidates ranked by confidence descending; decodedBits is a bit COUNT, not the
+   * bits themselves -- see decodeParamCandidate for those). Throws for empty input.
+   */
+  searchParams(bits, options = {}) {
+    return this.module.searchParams(bits, options);
+  }
+
+  /**
+   * Re-applies one candidate from searchParams' list (or any object with the same
+   * { bitOffset, interleaver, fec, fecMsgLen } shape) to `bits` and returns
+   * { bits: Uint8Array, text: string } -- the actual decoded message for that specific
+   * candidate, computed on demand so a user can inspect any entry in the ranked list,
+   * not just the top one.
+   */
+  decodeParamCandidate(bits, candidate) {
+    return this.module.decodeParamCandidate(bits, candidate);
+  }
 }

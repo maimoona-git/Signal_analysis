@@ -19,9 +19,11 @@
 #include <vector>
 
 #include "ingest.hpp"
+#include "correlate.hpp"
 #include "error_text.hpp"
 #include "js_util.hpp"
 #include "ml_bridge.hpp"
+#include "param_search.hpp"
 #include "pipeline_bridge.hpp"
 
 using emscripten::val;
@@ -240,6 +242,87 @@ val interleaver_out(const sigapp::InterleaverSpec& s) {
     return o;
 }
 
+// Feature 1 (SIH26147 extra feature, descoped): decode-driven parameter search.
+sigapp::InterleaverSpec interleaver_from_js(const val& il) {
+    reject_unknown_keys(il, {"kind", "rows", "cols", "seed", "branches", "delayIncrement"}, "interleaver");
+    sigapp::InterleaverSpec spec;
+    spec.kind = string_option(il["kind"], "interleaver.kind");
+    if (present(il["rows"])) spec.rows = uint_option(il["rows"], "interleaver.rows");
+    if (present(il["cols"])) spec.cols = uint_option(il["cols"], "interleaver.cols");
+    if (present(il["seed"])) spec.seed = uint_option(il["seed"], "interleaver.seed");
+    if (present(il["branches"])) spec.branches = uint_option(il["branches"], "interleaver.branches");
+    if (present(il["delayIncrement"])) spec.delay_increment = uint_option(il["delayIncrement"], "interleaver.delayIncrement");
+    return spec;
+}
+
+val param_candidate_out(const sigapp::ParamCandidate& c) {
+    val out = val::object();
+    out.set("bitOffset", c.bit_offset);
+    out.set("interleaver", c.interleaver ? interleaver_out(*c.interleaver) : val::null());
+    out.set("fec", c.fec ? val(*c.fec) : val::null());
+    out.set("fecMsgLen", c.fec_msg_len ? val(static_cast<double>(*c.fec_msg_len)) : val::null());
+    out.set("reencodeAgreement", c.reencode_agreement ? val(*c.reencode_agreement) : val::null());
+    out.set("headerRepeatScore", c.header_repeat_score);
+    out.set("confidence", c.confidence);
+    out.set("decodedBits", static_cast<double>(c.decoded_bits));
+    return out;
+}
+
+sigapp::ParamSearchOptions param_search_options_from_js(const val& o) {
+    sigapp::ParamSearchOptions options;
+    if (!present(o)) return options;
+    if (o.typeOf().as<std::string>() != "object") throw std::invalid_argument("param search options must be an object");
+    reject_unknown_keys(o, {"maxBitOffset", "confidenceFloor"}, "param search");
+    if (present(o["maxBitOffset"])) options.max_bit_offset = uint_option(o["maxBitOffset"], "maxBitOffset");
+    if (present(o["confidenceFloor"])) options.confidence_floor = number_option(o["confidenceFloor"], "confidenceFloor");
+    return options;
+}
+
+val search_params_js(val bits_js, val options_js) {
+    try {
+        const sigapp::Bits bits = bytes_from_js(bits_js);
+        const sigapp::ParamSearchResult r = sigapp::search_params(bits, param_search_options_from_js(options_js));
+        val out = val::object();
+        out.set("detected", r.detected);
+        out.set("bestIndex", static_cast<double>(r.best_index));
+        val candidates = val::array();
+        for (const auto& c : r.candidates) candidates.call<void>("push", param_candidate_out(c));
+        out.set("candidates", candidates);
+        return out;
+    } catch (const std::exception& e) {
+        throw_js_error(describe_exception(e));
+    }
+}
+
+// Re-decodes one candidate (by its search_params fields, round-tripped back from JS)
+// and returns both its bits and the same message text the results panel shows.
+val decode_param_candidate_js(val bits_js, val candidate_js) {
+    try {
+        const sigapp::Bits bits = bytes_from_js(bits_js);
+        // Accepts either a minimal {bitOffset, interleaver, fec, fecMsgLen} object or a
+        // whole entry straight from searchParams' candidates list (which also carries
+        // reencodeAgreement/headerRepeatScore/confidence/decodedBits) -- the extra
+        // fields are simply ignored, so a caller can pass either.
+        reject_unknown_keys(candidate_js,
+                           {"bitOffset", "interleaver", "fec", "fecMsgLen", "reencodeAgreement",
+                            "headerRepeatScore", "confidence", "decodedBits"},
+                           "candidate");
+        sigapp::ParamCandidate c;
+        c.bit_offset = present(candidate_js["bitOffset"]) ? uint_option(candidate_js["bitOffset"], "bitOffset") : 0;
+        if (present(candidate_js["interleaver"])) c.interleaver = interleaver_from_js(candidate_js["interleaver"]);
+        if (present(candidate_js["fec"])) c.fec = string_option(candidate_js["fec"], "fec");
+        if (present(candidate_js["fecMsgLen"])) c.fec_msg_len = uint_option(candidate_js["fecMsgLen"], "fecMsgLen");
+
+        const sigapp::Bits decoded = sigapp::decode_candidate(bits, c);
+        val out = val::object();
+        out.set("bits", bits_out(decoded));
+        out.set("text", sigapp::bits_to_text(decoded));
+        return out;
+    } catch (const std::exception& e) {
+        throw_js_error(describe_exception(e));
+    }
+}
+
 std::string column_label_string(sigapp::ColumnLabel label) {
     switch (label) {
         case sigapp::ColumnLabel::Constant: return "constant";
@@ -372,4 +455,6 @@ EMSCRIPTEN_BINDINGS(sig_bridge) {
     emscripten::function("classifySpectrogram", &classify_spectrogram);
     emscripten::function("classifyCapture", &classify_capture);
     emscripten::function("runPipeline", &run_pipeline);
+    emscripten::function("searchParams", &search_params_js);
+    emscripten::function("decodeParamCandidate", &decode_param_candidate_js);
 }

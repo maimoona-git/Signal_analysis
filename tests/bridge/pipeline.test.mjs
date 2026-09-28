@@ -328,7 +328,8 @@ describe('runPipeline option validation and failure modes', () => {
 
   it('rejects, never throws synchronously, for bad files and pipeline errors', async () => {
     await assert.rejects(bridge.runPipeline(new Uint8Array(64), { filename: 'mystery.bin' }), /unsupported file extension: '.bin'/);
-    await assert.rejects(bridge.runPipeline(new Uint8Array(13), { filename: 'odd.iq' }), /not aligned/);
+    // Rewritten into plain language by describe_exception; see bridge.test.mjs's own note.
+    await assert.rejects(bridge.runPipeline(new Uint8Array(13), { filename: 'odd.iq' }), /\.IQ file/);
     await assert.rejects(bridge.runPipeline(iq(), { fecScheme: 'ldpc' }), /fec_msg_len is required/);
     await assert.rejects(bridge.runPipeline(iq(), { interleaver: { kind: 'zigzag' } }), /unknown interleaver: 'zigzag'/);
     await assert.rejects(bridge.runPipeline(iq(), { interleaver: { kind: 'block', rows: 2 } }), /requires parameter 'cols'/);
@@ -435,5 +436,58 @@ describe('runPipeline option validation and failure modes', () => {
     assert.ok(Array.isArray(r.rankAnalysis.profile) && r.rankAnalysis.profile.length > 0);
     assert.deepEqual(Object.keys(r.rankAnalysis.profile[0]).sort(),
       ['baselineDeficiency', 'excessDeficiency', 'rank', 'width'].sort());
+  });
+
+  it('Feature 1: the parameter search finds the real LDPC decode of a SINGLE, non-repeating message', async () => {
+    // The exact bug this feature was built to fix: with nothing to repeat, the older
+    // detect.hpp heuristic can pick "no FEC" over a real, verifiable decode. This
+    // builds ONE LDPC(8,16) message (same construction as the Feature 2 test above,
+    // reused here) directly as demodulated bits -- searchParams works on bits before
+    // any decode, exactly like a result's demodulatedBits.
+    let seed = 81;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const kK = 8, kM = 8;
+    const h1 = Array.from({ length: kM }, () => new Array(kK).fill(0));
+    for (let j = 0; j < kK; j++) for (const r of [(j * 3 + 1) % kM, (j * 5 + 2) % kM, (j * 2 + 7) % kM]) h1[r][j] = 1;
+    const encodeBlock = (block) => {
+      const codeword = block.slice();
+      const parity = new Array(kM).fill(0);
+      for (let r = 0; r < kM; r++) {
+        let acc = 0;
+        for (let j = 0; j < kK; j++) acc ^= (h1[r][j] & block[j]);
+        if (r > 0) acc ^= parity[r - 1];
+        parity[r] = acc;
+      }
+      return codeword.concat(parity);
+    };
+    const text = 'SIH2026!';  // 8 bytes = 64 bits = 8 LDPC(8,16) blocks, no repeats
+    const msgBits = [];
+    for (const ch of text) for (let b = 7; b >= 0; b--) msgBits.push((ch.charCodeAt(0) >> b) & 1);
+    let coded = [];
+    for (let b = 0; b < msgBits.length / kK; b++) coded = coded.concat(encodeBlock(msgBits.slice(b * kK, (b + 1) * kK)));
+
+    const result = bridge.searchParams(new Uint8Array(coded));
+    assert.equal(result.detected, true);
+    const best = result.candidates[result.bestIndex];
+    assert.equal(best.fec, 'ldpc');
+    assert.ok(best.reencodeAgreement > 0.99);
+    assert.deepEqual(Object.keys(best).sort(),
+      ['bitOffset', 'confidence', 'decodedBits', 'fec', 'fecMsgLen', 'headerRepeatScore', 'interleaver', 'reencodeAgreement'].sort());
+
+    const decoded = bridge.decodeParamCandidate(new Uint8Array(coded), best);
+    assert.equal(decoded.text, text);  // the actual message, not a placeholder
+
+    // Every no-FEC candidate scores well below the real decode -- confirms the fix,
+    // not just that SOME candidate was found.
+    for (const c of result.candidates) {
+      if (!c.fec) assert.ok(c.confidence < best.confidence);
+    }
+  });
+
+  it('Feature 1: searchParams rejects unknown options; decodeParamCandidate rejects an out-of-range offset', async () => {
+    assert.throws(() => bridge.searchParams(new Uint8Array([1, 0, 1, 1, 0, 0, 1, 0]), { bogus: 1 }), /bogus/);
+    assert.throws(
+      () => bridge.decodeParamCandidate(new Uint8Array([1, 0, 1, 1]), { bitOffset: 4 }),
+      /bit_offset/);
   });
 });
