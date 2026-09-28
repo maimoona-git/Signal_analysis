@@ -1,6 +1,6 @@
 > **Landing page update:** `/` now uses a separate black/white/grey direction (Archivo, big disc with a scrolling greyscale waterfall, modelled on a reference layout the user supplied). It lives in `src/styles/landing.css` and `src/layouts/LandingLayout.astro`. Everything below still describes `tokens.css`, `/web` and `/style-guide`.
 
-# Design direction — PS 26147 site
+# Design direction — Deconflicted site
 
 Research notes and the resulting direction for `/site` (and, in Phase 5, `/web`).
 Written before any HTML/CSS, per `CLAUDE.md`'s "Frontend / UI direction".

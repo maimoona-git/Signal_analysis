@@ -7,9 +7,9 @@
 
 <header class="nav">
   <div class="nav__inner">
-    <a href="/" class="nav__wordmark">PS 26147</a>
+    <a href="/" class="nav__wordmark">Deconflicted</a>
     <nav class="nav__links" aria-label="Primary">
-      <a href="/web/" class="nav__launch">Launch app</a>
+      <a href="/web/index.html" class="nav__launch">Launch app</a>
     </nav>
   </div>
 </header>
@@ -57,7 +57,9 @@
   }
 
   .nav__launch:hover {
-    background: var(--phosphor-dim);
+    /* --phosphor, not --phosphor-dim: measured at 3.6:1 against ink-950 text,
+       under WCAG's 4.5:1 normal-text minimum -- --phosphor clears 5.0:1. */
+    background: var(--phosphor);
     color: var(--ink-950);
   }
 

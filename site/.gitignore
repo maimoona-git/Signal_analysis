@@ -1,5 +1,12 @@
 # build output
 dist/
+
+# Local-dev-only convenience: a symlink to the compiled app's own build output
+# (../../build-wasm/dist), so "Launch app" resolves under `astro dev`/`preview`
+# without deploying anything. Machine-specific (points outside this checkout's
+# own tracked files) and not how a real deployment would wire /site to /web --
+# see site/README.md.
+public/web
 # generated types
 .astro/
 

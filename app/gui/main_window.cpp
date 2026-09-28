@@ -21,7 +21,7 @@
 namespace sigui {
 
 MainWindow::MainWindow(AnalysisBackend* backend, QWidget* parent) : QMainWindow(parent), backend_(backend) {
-    setWindowTitle(QStringLiteral("PS 26147 - Signal Analysis Tool"));
+    setWindowTitle(QStringLiteral("Deconflicted - Signal Analysis Tool"));
     resize(1100, 700);
     setDockNestingEnabled(true);
     buildUi();

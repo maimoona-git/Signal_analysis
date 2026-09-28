@@ -1,4 +1,4 @@
-/* Design tokens for PS 26147 — shared between /site (this file's canonical home)
+/* Design tokens for Deconflicted — shared between /site (this file's canonical home)
    and /web (copied in verbatim in Phase 5; do not fork the values, edit here and
    re-copy). See /site/DESIGN.md for the research and reasoning behind these
    choices — this file is just the values, not the "why".
@@ -19,15 +19,23 @@
   --paper-100: #ece8df;
   --ink-text: #e8ecef;
   --paper-text: #1b1f23;
-  --line-dark: #3a4450;
-  --line-light: #c9c2b2;
+  /* Phase 6 polish: darkened from the first draft (#3a4450 / #c9c2b2) -- measured
+     at 1.9:1 / 1.6:1 against the panel border's actual background, well under
+     the 3:1 WCAG non-text-UI minimum a border needs to actually be visible.
+     These clear 4.1:1 / 4.6:1 (see DESIGN.md's contrast table). */
+  --line-dark: #6b7684;
+  --line-light: #786e5a;
   /* Two muted accents only, both from the amber/green phosphor-monitor family
      (see DESIGN.md) -- no blue, navy or purple anywhere in this palette, and
      both are dialled well below "neon": readable as an old terminal's single
-     working color, not a bright modern UI accent. */
-  --phosphor: #4f9d72;
+     working color, not a bright modern UI accent. Phase 6 polish: both were
+     re-picked (from #4f9d72 / #b8863f) to be the single value each that clears
+     WCAG AA text contrast (4.5:1) on the dark scheme AND the 3:1 non-text
+     minimum on the light scheme's raised surface, where each is also used (a
+     Badge's status dot) -- measured, see DESIGN.md's contrast table. */
+  --phosphor: #46916f;
   --phosphor-dim: #3a7856;
-  --amber: #b8863f;
+  --amber: #a37a3e;
 
   /* Type. IBM Plex Mono for headings/labels/data, IBM Plex Sans for body --
      same family, so the two never look bolted together (see DESIGN.md). */

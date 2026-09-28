@@ -575,7 +575,7 @@ TEST_CASE("main window: layout and controls match the native app") {
     win.show();
     pump();
 
-    CHECK(win.windowTitle() == "PS 26147 - Signal Analysis Tool");
+    CHECK(win.windowTitle() == "Deconflicted - Signal Analysis Tool");
     CHECK(win.statusBar()->currentMessage() == "Open a .wav or .IQ file to begin.");
     CHECK(win.width() == 1100 && win.height() == 700);
 

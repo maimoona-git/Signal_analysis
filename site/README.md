@@ -1,6 +1,6 @@
-# PS 26147 — marketing/informational site
+# Deconflicted — marketing/informational site
 
-The landing page (`/`), `/about`, and `/docs` for PS 26147 (see the repo root
+The landing page (`/`), `/about`, and `/docs` for Deconflicted (see the repo root
 `CLAUDE.md`'s "Frontend / UI direction" for the aesthetic brief this follows,
 and `DESIGN.md` for the research and palette/type/motif decisions). A separate,
 content-focused Astro project from `/web` (the compiled app's static shell),
@@ -37,3 +37,15 @@ site/
 | `npm run preview` | serve the build locally |
 
 Static output, no server required — deploys the same way `/web` does.
+
+## Testing "Launch app" locally
+
+`/site` and `/web` are two separate static builds (this Astro project, and the
+compiled Qt/WASM app built by CMake into `build-wasm/dist`) — nothing serves
+them together yet. For local testing only, `public/web` is a symlink to
+`../../build-wasm/dist`, so `npm run dev`/`preview` resolve `/web/` to the
+actual compiled app (build it first: `scripts/build-wasm.sh` from the repo
+root). It's gitignored, machine-specific, and not how a real deployment would
+route the two together (that's a reverse-proxy/hosting decision, not this
+project's).
+
