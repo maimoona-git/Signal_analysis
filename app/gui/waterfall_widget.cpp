@@ -87,7 +87,15 @@ void WaterfallWidget::paintData(QPainter& painter) {
     if (image_.isNull()) return;
     const QPointF top_left = dataToPixel(imageRect_.left(), imageRect_.bottom());
     const QPointF bottom_right = dataToPixel(imageRect_.right(), imageRect_.top());
-    painter.setRenderHint(QPainter::SmoothPixmapTransform, false);  // hard pixels, like pyqtgraph's image item
+    // Smooth (bilinear), not the original pyqtgraph's own hard nearest-neighbor: found from
+    // a real user report that a short capture's picture (a handful of columns, stretched
+    // wide) reads as "a blocky photo pasted in", not a real-looking waterfall -- pyqtgraph's
+    // own hard-pixel rendering has the exact same problem, this just no longer matches it
+    // pixel-for-pixel. Sampling at a source cell's own centre (not its edge) still lands on
+    // that cell's exact colour either way, so this does not disturb the colour-fidelity
+    // tests (test_gui.cpp's own "hot cells are yellow" etc. sample cell centres for exactly
+    // this reason) -- verified by running them with this change, not assumed.
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
     painter.drawImage(QRectF(top_left, bottom_right), image_);
 }
 

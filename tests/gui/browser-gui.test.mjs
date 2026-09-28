@@ -41,10 +41,19 @@ function readRecords(file) {
 const RECORDS = readRecords('pipeline.rec');
 const record = (name) => RECORDS.find((r) => r.name === name);
 const fromHex = (h) => Buffer.from(h, 'hex').toString('utf8');
-// viridis table -> Set of packed colours, to check the waterfall is really drawn with it
-const VIRIDIS = new Set(
-  [...fs.readFileSync(path.join(root, 'app/gui/viridis_table.inc'), 'utf8').matchAll(/\{(\d+), (\d+), (\d+)\}/g)]
-    .map((m) => (Number(m[1]) << 16) | (Number(m[2]) << 8) | Number(m[3])));
+// viridis table -> the raw RGB triples, to check the waterfall is really drawn with it
+const VIRIDIS_RGB = [...fs.readFileSync(path.join(root, 'app/gui/viridis_table.inc'), 'utf8').matchAll(/\{(\d+), (\d+), (\d+)\}/g)]
+  .map((m) => [Number(m[1]), Number(m[2]), Number(m[3])]);
+// Smooth (bilinear) scaling (WaterfallWidget::paintData, added from a real user report that a
+// short capture read as "a blocky photo pasted in") blends neighbouring cells, so a rendered pixel
+// is often an in-between colour that is NOT one of the 256 exact table entries -- but a blend of
+// two adjacent viridis entries lies on/very near the same smooth viridis curve, so "is within a
+// few RGB units of SOME table entry" still proves viridis is the colour map in use, where the old
+// exact-membership check (which assumed hard nearest-neighbor pixels) no longer can.
+const nearViridis = (c, tolerance = 10) => {
+  const r = c >> 16, g = (c >> 8) & 255, b = c & 255;
+  return VIRIDIS_RGB.some(([vr, vg, vb]) => Math.abs(r - vr) <= tolerance && Math.abs(g - vg) <= tolerance && Math.abs(b - vb) <= tolerance);
+};
 
 // --- a plain static file server (no special headers) --------------------------------
 
@@ -174,8 +183,8 @@ describe('the Qt-WASM app in real Chrome', () => {
     const wf = await sample(s.waterfall.plot);
     const coloured = wf.filter((c) => c !== 0xffffff);
     assert.ok(coloured.length > wf.length * 0.8, `waterfall mostly filled (${coloured.length}/${wf.length})`);
-    const inTable = coloured.filter((c) => VIRIDIS.has(c)).length;
-    assert.ok(inTable > coloured.length * 0.9, `${inTable}/${coloured.length} waterfall pixels are exact viridis colours`);
+    const inTable = coloured.filter((c) => nearViridis(c)).length;
+    assert.ok(inTable > coloured.length * 0.9, `${inTable}/${coloured.length} waterfall pixels are on the viridis curve`);
 
     const cs = await sample(s.constellation.plot);
     const blue = cs.filter((c) => { const r = c >> 16, g = (c >> 8) & 255, b = c & 255; return b > r + 40 && b > 150; });

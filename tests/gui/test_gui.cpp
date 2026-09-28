@@ -63,6 +63,17 @@ QImage render(QWidget& w, int width, int height) {
 
 QRgb pixel_at(const QImage& img, QPointF p) { return img.pixel(static_cast<int>(std::lround(p.x())), static_cast<int>(std::lround(p.y()))); }
 
+// Smooth (bilinear) scaling (WaterfallWidget::paintData, found needed from a real user
+// report -- see its own comment) samples a cell's own centre almost exactly, but not
+// byte-for-byte: measured up to a few RGB units off, a genuine, harmless artifact of
+// sub-pixel interpolation, not a real colour/position error. A small tolerance here
+// checks the real thing the original exact-equality check cared about (the hot cell
+// reads as hot, a cold one as cold) without depending on exact interpolation rounding.
+bool color_near(QRgb a, QRgb b, int tolerance = 8) {
+    return std::abs(qRed(a) - qRed(b)) <= tolerance && std::abs(qGreen(a) - qGreen(b)) <= tolerance &&
+          std::abs(qBlue(a) - qBlue(b)) <= tolerance;
+}
+
 // A spectrogram on a known grid: `frames` x `nfft`, times 0..0.5 s, freqs -4000..3000 Hz.
 sigapp::Spectrogram make_spectrogram(unsigned frames, unsigned nfft, float fill = 0.0f) {
     sigapp::Spectrogram s;
@@ -226,14 +237,47 @@ TEST_CASE("waterfall: time runs left to right, low frequencies at the bottom, ho
     auto cell_center = [&](unsigned t, unsigned f) {
         return w.dataToPixel(0.5 * (t + 0.5) / 6.0, -4000.0 + 7000.0 * (f + 0.5) / 8.0);
     };
-    CHECK(pixel_at(img, cell_center(2, 5)) == viridis(255));      // hot cell, where the data says it is
-    CHECK(pixel_at(img, cell_center(0, 0)) == viridis(0));         // cold
-    CHECK(pixel_at(img, cell_center(5, 7)) == viridis(0));
-    CHECK(pixel_at(img, cell_center(1, 5)) == viridis(0));         // neighbours in time are cold
-    CHECK(pixel_at(img, cell_center(2, 4)) == viridis(0));         // and in frequency
+    CHECK(color_near(pixel_at(img, cell_center(2, 5)), viridis(255)));  // hot cell, where the data says it is
+    CHECK(color_near(pixel_at(img, cell_center(0, 0)), viridis(0)));    // cold
+    CHECK(color_near(pixel_at(img, cell_center(5, 7)), viridis(0)));
+    CHECK(color_near(pixel_at(img, cell_center(1, 5)), viridis(0)));    // neighbours in time are cold
+    CHECK(color_near(pixel_at(img, cell_center(2, 4)), viridis(0)));    // and in frequency
     CHECK(cell_center(0, 0).y() > cell_center(0, 7).y());          // low frequency is lower on screen
     CHECK(cell_center(0, 0).x() < cell_center(5, 0).x());          // later frames are further right
     CHECK(w.image().pixel(2, 8 - 1 - 5) == viridis(255));          // stored with row 0 = highest frequency
+}
+
+TEST_CASE("waterfall: rendered with smooth (bilinear) scaling, not hard blocky pixels") {
+    // Found from a real user report: a short capture's picture (a handful of columns,
+    // stretched wide to fill the plot) rendered with hard nearest-neighbor pixels reads as
+    // "a blocky photo pasted in", not a real-looking waterfall. This checks the actual
+    // visual property that fixes it -- a point straddling two very different columns reads
+    // as a blend of both, not a hard step -- so a future regression back to hard pixels
+    // (unlike the cell-centre colour checks above, which cannot tell the two apart) is
+    // caught.
+    WaterfallWidget w;
+    auto s = make_spectrogram(2, 1);
+    s.data = {-100.0f, 100.0f};  // column 0 cold, column 1 hot
+    s.times = {0.0, 1.0};
+    w.setData(s);
+    const QImage img = render(w, 400, 200);
+
+    // A single frequency bin and s.freqs.size() == 1: imageRect_ falls back to
+    // (0,0,frames,nfft) data-space units (see WaterfallWidget::setData), so the one
+    // row spans y in [0, 1].
+    const QPointF c0 = w.dataToPixel(0.25, 0.5);  // centre of column 0 (pure cold)
+    const QPointF c1 = w.dataToPixel(0.75, 0.5);  // centre of column 1 (pure hot)
+    // Measured (not assumed): with only two source columns stretched this wide, Qt's
+    // bilinear ramp is not centred on the midpoint -- it sits flat at the cold colour
+    // until around the midpoint, then rises the rest of the way to c1, so a point most of
+    // the way from c0 to c1 (not exactly halfway) is where the blend actually shows.
+    const QPointF mostly_toward_hot(c0.x() + 0.85 * (c1.x() - c0.x()), c0.y());
+
+    const QRgb cold = viridis(0), hot = viridis(255);
+    const QRgb blended = pixel_at(img, mostly_toward_hot);
+    CHECK(!color_near(blended, cold, 20));  // not a hard step: measurably left the cold colour...
+    CHECK(!color_near(blended, hot, 20));   // ...without having fully arrived at the hot one either
+    CHECK(qRed(blended) > qRed(cold) && qRed(blended) < qRed(hot));
 }
 
 TEST_CASE("waterfall: a long capture is folded into a bounded picture without losing a burst") {
