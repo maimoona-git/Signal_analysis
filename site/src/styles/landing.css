@@ -1,0 +1,110 @@
+@import "@fontsource-variable/archivo/wdth.css";
+
+/* Landing page only: monochrome. Kept separate from tokens.css, which /web still shares. */
+:root {
+  --black: #000;
+  --white: #fff;
+  --grey-100: #f0f0f0;
+  --grey-300: #c9c9c9;
+  --grey-500: #5c5c5c;
+  --grey-700: #333;
+  --on-black-muted: #a6a6a6;
+  --font: "Archivo Variable", "Helvetica Neue", Arial, sans-serif;
+  --gutter: clamp(1.25rem, 4vw, 4rem);
+  --inner: 76rem;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--white);
+  color: var(--grey-700);
+  font-family: var(--font);
+  font-size: 1rem;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  color: var(--black);
+  font-weight: 800;
+  font-stretch: 125%;
+  text-transform: uppercase;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--black);
+  outline-offset: 3px;
+}
+
+.on-black :focus-visible,
+.on-black:focus-visible {
+  outline-color: var(--white);
+}
+
+.button {
+  display: inline-block;
+  padding: 0.85rem 1.75rem;
+  border: 2px solid var(--black);
+  border-radius: 6px;
+  background: var(--black);
+  color: var(--white);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  font-stretch: 112%;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+
+.button:hover {
+  background: var(--white);
+  color: var(--black);
+}
+
+.on-black .button,
+.button--invert {
+  background: var(--white);
+  color: var(--black);
+  border-color: var(--white);
+}
+
+.on-black .button:hover,
+.button--invert:hover {
+  background: var(--black);
+  color: var(--white);
+}
+
+.inner {
+  max-width: var(--inner);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}

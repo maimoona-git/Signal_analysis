@@ -1,300 +1,486 @@
 ---
-import BaseLayout from "../layouts/BaseLayout.astro";
-import Panel from "../components/Panel.astro";
-import Badge from "../components/Badge.astro";
-import BlinkCursor from "../components/BlinkCursor.astro";
-
-// A capture actually going through this pipeline, phrased as its own log --
-// content-accurate stage names/values (matching app/pipeline's real output),
-// not placeholder lorem ipsum. See the <script> below for how it's revealed.
-const log = [
-  "load capture.iq  524288 samples",
-  "dsp: fft 256pt, spectrogram (2048, 256)",
-  "ml: predicted bpsk, 98% confidence",
-  "demod: bpsk -> 8192 bits",
-  "fec: ldpc decoded, 99.7% re-encode agreement",
-  'message: "SIH2026!"',
-];
+import LandingLayout from "../layouts/LandingLayout.astro";
 
 const stages = [
-  { title: "Ingestion", detail: "A .wav or .IQ file, read as bytes -- nothing leaves the browser." },
-  { title: "DSP / spectral analysis", detail: "FFT and spectrogram, computed in WebAssembly." },
+  { title: "Ingestion", detail: "A .wav or .IQ file is read as bytes. Nothing leaves the browser." },
+  { title: "DSP and spectral analysis", detail: "FFT and spectrogram, computed in WebAssembly." },
   { title: "ML classification", detail: "A small ONNX model guesses the modulation scheme, in JavaScript." },
   { title: "Demodulation", detail: "17 linear schemes plus FSK, back in the WASM core." },
   { title: "De-interleaving", detail: "Block, diagonal, convolutional or pseudo-random, undone." },
-  { title: "FEC decoding", detail: "Viterbi, LDPC, Reed–Solomon, or both concatenated." },
+  { title: "FEC decoding", detail: "Viterbi, LDPC, Reed-Solomon, or both concatenated." },
   { title: "Bitstream correlation", detail: "Repeating headers and frame boundaries, found in the decoded bits." },
-  { title: "GUI", detail: "Qt Widgets, compiled to WASM, rendering every stage above." },
+  { title: "GUI", detail: "Qt Widgets, compiled to WASM, showing every stage above." },
 ];
 
-const stack = ["C++ / liquid-dsp", "Qt for WebAssembly", "ONNX Runtime Web", "Embind", "Emscripten"];
+const features = [
+  {
+    title: "Frame raster",
+    text: "Lays the decoded bits out at a row width you choose, so repeating frame structure shows up as vertical stripes.",
+  },
+  {
+    title: "Rank analysis",
+    text: "Finds a block code's length and rate from raw bits alone, by looking for rank drops over GF(2).",
+  },
+  {
+    title: "Parameter search",
+    text: "Tries every offset, interleaver and FEC combination and ranks them by how well the decode re-encodes to the input.",
+  },
+  {
+    title: "Waterfall and constellation",
+    text: "Both plots zoom with the wheel and pan by dragging, so a short burst can be inspected up close.",
+  },
+];
+
+const stack = ["C++ and liquid-dsp", "Qt for WebAssembly", "ONNX Runtime Web", "Embind", "Emscripten"];
 ---
 
-<BaseLayout
-  title="Home"
-  description="PS 26147: a signal analysis tool that runs entirely in your browser, with no server."
-  scheme="dark"
+<LandingLayout
+  title="PS 26147: signal analysis in your browser"
+  description="PS 26147 is a signal analysis tool that runs entirely in your browser, with no server."
 >
   <section class="hero">
-    <div class="band__inner hero__inner">
-      <div class="hero__copy">
-        <h1>Signal analysis that never leaves your browser<BlinkCursor /></h1>
-        <p class="hero__lede">
-          Demodulation, FEC decoding, and an ML modulation classifier, compiled to WebAssembly and
-          run entirely client-side. No upload, no server, no account.
-        </p>
-        <div class="hero__actions">
-          <a class="button button--primary" href="/web/">Launch app</a>
+    <div class="disc" aria-hidden="true">
+      <canvas id="waterfall" width="300" height="300"></canvas>
+    </div>
+    <p class="wordmark" aria-hidden="true"><b>PS</b><span>26147</span></p>
+
+    <div class="hero__copy">
+      <h1>Signal analysis that never leaves your browser.</h1>
+      <p class="hero__lede">
+        Demodulation, FEC decoding and an ML modulation classifier, compiled to WebAssembly and run
+        entirely client-side. No upload, no server, no account.
+      </p>
+      <a class="button" href="/web/index.html">Launch app</a>
+
+      <aside class="notice" id="notice" aria-label="What's new">
+        <div class="notice__head">
+          <p class="notice__label">New: parameter search</p>
+          <button class="notice__close" type="button" aria-label="Dismiss">&times;</button>
         </div>
+        <h2>Find the code, not just the signal.</h2>
+        <p>
+          When auto-detect misses, parameter search ranks every interleaver and FEC combination by
+          whether the decode checks out, so the message still comes out readable.
+        </p>
+        <a class="notice__link" href="/web/index.html">Try it in the app</a>
+      </aside>
+    </div>
+  </section>
+
+  <section class="section" id="what">
+    <div class="inner split">
+      <h2>One tool, from raw capture to readable message</h2>
+      <div class="prose">
+        <p>
+          PS 26147 takes a captured radio signal and works out what is in it: the modulation scheme,
+          whether it is interleaved, whether it carries forward error correction, and what the
+          decoded message says.
+        </p>
+        <p>
+          It is the same C++ DSP and FEC core as the native desktop tool, compiled to WebAssembly
+          and wrapped in a Qt GUI. Because it runs client-side, a capture never has to leave your
+          machine.
+        </p>
       </div>
-      <Panel label="Session log" class="hero__log-panel">
-        <ol class="log" id="session-log" aria-label="Example pipeline run">
-          {log.map((line) => <li class="log__line">{line}</li>)}
-        </ol>
-      </Panel>
     </div>
   </section>
 
-  <section class="band" data-scheme="light">
-    <div class="band__inner">
-      <h2>What it does</h2>
-      <p>
-        PS 26147 takes a captured radio signal and works out what's in it: which modulation scheme,
-        whether it's interleaved, whether it carries forward error correction, and what the decoded
-        message actually says. It's a re-platformed version of a native desktop tool -- the same
-        C++ DSP and FEC core, now compiled to WebAssembly and running inside a Qt-for-WebAssembly
-        GUI, instead of installed software.
-      </p>
-      <p>
-        Because it's client-side, a capture never has to leave your machine to be analyzed --
-        there's no server in this pipeline at all.
-      </p>
-    </div>
-  </section>
-
-  <section class="band" data-scheme="dark">
-    <div class="band__inner">
+  <section class="section on-black" id="pipeline">
+    <div class="inner split">
       <h2>How a capture moves through the pipeline</h2>
-      <Panel label="Pipeline">
-        <ol class="stages">
-          {
-            stages.map((stage, i) => (
-              <li class="stages__step">
-                <span class="stages__marker" aria-hidden="true">
-                  {String(i + 1).padStart(2, "0")}
-                </span>
-                <span class="stages__body">
-                  <span class="stages__title">{stage.title}</span>
-                  <span class="stages__detail">{stage.detail}</span>
-                </span>
-              </li>
-            ))
-          }
-        </ol>
-      </Panel>
+      <ol class="stages">
+        {
+          stages.map((stage, i) => (
+            <li class="stages__step">
+              <span class="stages__n" aria-hidden="true">{String(i + 1).padStart(2, "0")}</span>
+              <span class="stages__title">{stage.title}</span>
+              <span class="stages__detail">{stage.detail}</span>
+            </li>
+          ))
+        }
+      </ol>
     </div>
   </section>
 
-  <section class="band" data-scheme="light">
-    <div class="band__inner">
+  <section class="section" id="features">
+    <div class="inner">
+      <h2 class="section__title">When the signal is not textbook</h2>
+      <ul class="features">
+        {
+          features.map((f) => (
+            <li class="features__item">
+              <h3>{f.title}</h3>
+              <p>{f.text}</p>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </section>
+
+  <section class="section section--tight" id="stack">
+    <div class="inner split">
       <h2>Built with</h2>
-      <p>No Python at runtime -- it only exists in <code>/ml</code> as offline training tooling.</p>
-      <p class="stack">
-        {stack.map((item) => <Badge variant="neutral">{item}</Badge>)}
-      </p>
+      <div class="prose">
+        <ul class="stack">
+          {stack.map((item) => <li>{item}</li>)}
+        </ul>
+        <p>There is no Python at runtime. It only exists in the repo as offline training tooling.</p>
+      </div>
     </div>
   </section>
 
-  <section class="band band--cta" data-scheme="dark">
-    <div class="band__inner band__inner--center">
-      <h2>Open a capture and see what's in it</h2>
-      <a class="button button--primary" href="/web/">Launch app</a>
+  <section class="cta">
+    <div class="inner cta__inner">
+      <h2>Open a capture and see what is in it.</h2>
+      <a class="button" href="/web/index.html">Launch app</a>
     </div>
   </section>
-</BaseLayout>
+</LandingLayout>
 
-<style>
-  .band {
-    background: var(--surface);
-    color: var(--text);
-  }
-
-  .band__inner {
-    max-width: var(--content-max-width);
-    margin: 0 auto;
-    padding: var(--space-8) var(--space-5);
-  }
-
-  .band__inner--center {
-    text-align: center;
-  }
-
-  .band--cta .button {
-    margin-top: var(--space-2);
-  }
-
+<style is:global>
   .hero {
-    background: var(--surface);
-    color: var(--text);
-    border-bottom: var(--panel-border-width) solid var(--line);
+    position: relative;
+    overflow: hidden;
+    min-height: max(44rem, 48vw);
+    padding: 9rem var(--gutter) 4rem calc(52vw);
   }
 
-  .hero__inner {
-    display: grid;
-    grid-template-columns: 1.1fr 1fr;
-    gap: var(--space-7);
-    align-items: center;
+  .disc {
+    position: absolute;
+    left: -14vw;
+    top: -16vw;
+    width: 60vw;
+    height: 60vw;
+    border-radius: 50%;
+    background: var(--black);
+    overflow: hidden;
+  }
+
+  .disc canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    opacity: 0.9;
+  }
+
+  /* Darkens the lower-left of the disc so the wordmark keeps its contrast over bright bursts. */
+  .disc::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(200deg, transparent 35%, rgba(0, 0, 0, 0.88) 78%);
+  }
+
+  .wordmark {
+    position: absolute;
+    left: clamp(1.5rem, 4vw, 4rem);
+    top: 31vw;
+    display: flex;
+    align-items: baseline;
+    gap: 0.35em;
+    color: var(--white);
+    font-size: clamp(2.5rem, 5.6vw, 6rem);
+    font-stretch: 125%;
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+
+  .wordmark b {
+    font-weight: 800;
+  }
+
+  .wordmark span {
+    font-weight: 200;
+  }
+
+  .hero__copy {
+    max-width: 34rem;
   }
 
   .hero h1 {
-    font-size: var(--text-4xl);
-    max-width: 14ch;
+    font-size: clamp(1.5rem, 2.6vw, 2.5rem);
+    letter-spacing: 0.02em;
   }
 
   .hero__lede {
-    font-size: var(--text-lg);
-    color: var(--muted);
-    max-width: 34ch;
+    margin: 1.5rem 0 2rem;
+    max-width: 30rem;
+    color: var(--grey-500);
   }
 
-  .hero__actions {
+  .notice {
+    margin-top: 3.5rem;
+    padding: 1.75rem 2rem 1.75rem;
+    border-radius: 16px;
+    background: var(--grey-100);
+  }
+
+  .notice[hidden] {
+    display: none;
+  }
+
+  .notice__head {
     display: flex;
-    gap: var(--space-4);
-    margin-top: var(--space-6);
+    justify-content: space-between;
+    align-items: start;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
   }
 
-  .button {
+  .notice__label {
+    color: var(--grey-500);
+    font-size: 0.875rem;
+  }
+
+  .notice__close {
+    margin: -0.4rem -0.6rem 0 0;
+    padding: 0.2rem 0.6rem;
+    border: 0;
+    background: none;
+    color: var(--black);
+    font: inherit;
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .notice h2 {
+    font-size: clamp(1.05rem, 1.6vw, 1.35rem);
+    margin-bottom: 0.75rem;
+  }
+
+  .notice p:not(.notice__label) {
+    color: var(--grey-700);
+    font-size: 0.9375rem;
+  }
+
+  .notice__link {
     display: inline-block;
-    padding: var(--space-3) var(--space-5);
-    border: var(--panel-border-width) solid var(--phosphor-dim);
-    border-radius: var(--panel-radius);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    font-weight: 600;
-    text-decoration: none;
+    margin-top: 1rem;
+    color: var(--black);
+    font-weight: 700;
+    text-underline-offset: 0.25em;
   }
 
-  .button--primary {
-    background: var(--phosphor-dim);
-    color: var(--ink-950);
+  .section {
+    padding: clamp(4rem, 9vw, 8rem) 0;
+    background: var(--white);
   }
 
-  .button--primary:hover {
-    background: var(--phosphor);
+  .section--tight {
+    padding-top: 0;
   }
 
-  .log {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
+  .section.on-black {
+    background: var(--black);
+    color: var(--white);
+  }
+
+  .on-black h2,
+  .on-black h3 {
+    color: var(--white);
+  }
+
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: clamp(2rem, 6vw, 6rem);
+    align-items: start;
+  }
+
+  .split h2,
+  .section__title {
+    font-size: clamp(1.4rem, 2.6vw, 2.25rem);
+  }
+
+  .prose {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
-  }
-
-  .log__line {
-    color: var(--phosphor);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .log__line::before {
-    content: "$ ";
-    color: var(--muted);
+    gap: 1.25rem;
+    max-width: 38rem;
   }
 
   .stages {
     list-style: none;
     margin: 0;
     padding: 0;
-    position: relative;
+    border-top: 1px solid #4a4a4a;
   }
 
   .stages__step {
     display: grid;
-    grid-template-columns: 2.5rem 1fr;
-    gap: var(--space-4);
-    padding: var(--space-3) 0;
-    position: relative;
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    column-gap: 1rem;
+    padding: 1.1rem 0;
+    border-bottom: 1px solid #4a4a4a;
   }
 
-  .stages__step:not(:last-child)::after {
-    content: "";
-    position: absolute;
-    left: 1.1rem;
-    top: 2.3rem;
-    bottom: -0.7rem;
-    width: 1px;
-    background: var(--line);
-  }
-
-  .stages__marker {
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    color: var(--phosphor);
-    line-height: 1.4;
-  }
-
-  .stages__body {
-    display: flex;
-    flex-direction: column;
+  .stages__n {
+    grid-row: span 2;
+    color: var(--on-black-muted);
+    font-variant-numeric: tabular-nums;
   }
 
   .stages__title {
-    font-family: var(--font-mono);
-    font-weight: 600;
+    font-weight: 700;
+    font-stretch: 112%;
   }
 
   .stages__detail {
-    color: var(--muted);
-    font-size: var(--text-sm);
+    color: var(--on-black-muted);
+    font-size: 0.9375rem;
+  }
+
+  .features {
+    list-style: none;
+    margin: 3rem 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3rem clamp(2rem, 6vw, 6rem);
+  }
+
+  .features__item {
+    padding-top: 1.25rem;
+    border-top: 3px solid var(--black);
+  }
+
+  .features__item h3 {
+    margin-bottom: 0.75rem;
+    font-size: 1.125rem;
+  }
+
+  .features__item p {
+    max-width: 30rem;
   }
 
   .stack {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-3);
+    gap: 0.6rem;
   }
 
-  @media (max-width: 48rem) {
-    .hero__inner {
+  .stack li {
+    padding: 0.4rem 0.9rem;
+    border: 1px solid var(--black);
+    border-radius: 999px;
+    color: var(--black);
+    font-size: 0.9375rem;
+  }
+
+  .cta {
+    background: var(--grey-100);
+    padding: clamp(3.5rem, 8vw, 6rem) 0;
+  }
+
+  .cta__inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 2rem;
+  }
+
+  .cta h2 {
+    font-size: clamp(1.4rem, 2.6vw, 2.25rem);
+    max-width: 30rem;
+  }
+
+  @media (max-width: 52rem) {
+    .hero {
+      min-height: 0;
+      padding: 0 var(--gutter) 3rem;
+    }
+    .disc {
+      position: relative;
+      left: calc(-1 * var(--gutter));
+      top: 0;
+      width: calc(100% + 2 * var(--gutter));
+      height: 78vw;
+      border-radius: 0 0 50% 50% / 0 0 36% 36%;
+      margin-bottom: 2rem;
+    }
+    .wordmark {
+      left: var(--gutter);
+      top: 54vw;
+      font-size: 11vw;
+    }
+    .hero__copy {
+      max-width: none;
+    }
+    .split,
+    .features {
       grid-template-columns: 1fr;
     }
-    .hero h1 {
-      max-width: none;
+    .features {
+      gap: 2rem;
     }
   }
 </style>
 
 <script>
-  // A single orchestrated reveal on load: the session log types itself in,
-  // like a real terminal session, rather than appearing all at once or via a
-  // generic fade/slide entrance. Respects prefers-reduced-motion by skipping
-  // straight to the finished text (also the no-JS fallback, since the lines
-  // are real text content, not injected by this script).
-  const list = document.getElementById("session-log");
-  if (list && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    const lines = Array.from(list.children) as HTMLElement[];
-    const texts = lines.map((line) => line.textContent ?? "");
-    lines.forEach((line) => (line.textContent = ""));
+  // A scrolling greyscale waterfall: noise floor, steady carriers, a keyed FSK pair and an
+  // on/off wideband burst. Static when the visitor prefers reduced motion.
+  const canvas = document.getElementById("waterfall") as HTMLCanvasElement | null;
+  const ctx = canvas?.getContext("2d");
+  if (canvas && ctx) {
+    const W = canvas.width;
+    const H = canvas.height;
+    const img = ctx.createImageData(W, H);
+    const px = img.data;
+    const carriers = [
+      { x: 52, amp: 0.55 },
+      { x: 118, amp: 0.4 },
+      { x: 231, amp: 0.5 },
+      { x: 268, amp: 0.3 },
+    ];
+    let t = 0;
+    let bit = 0;
 
-    let lineIndex = 0;
-    let charIndex = 0;
-    const typeNext = () => {
-      if (lineIndex >= lines.length) return;
-      const text = texts[lineIndex];
-      charIndex += 1;
-      lines[lineIndex].textContent = text.slice(0, charIndex);
-      if (charIndex >= text.length) {
-        lineIndex += 1;
-        charIndex = 0;
-        setTimeout(typeNext, 220);
-      } else {
-        setTimeout(typeNext, 14);
-      }
+    const bump = (x: number, centre: number, half: number) => {
+      const d = Math.abs(x - centre) / half;
+      return d >= 1 ? 0 : 0.5 * (1 + Math.cos(Math.PI * d));
     };
-    typeNext();
+
+    const newRow = (row: Uint8ClampedArray) => {
+      if (t % 7 === 0) bit = Math.random() < 0.5 ? 0 : 1;
+      const wideOn = t % 180 < 70;
+      for (let x = 0; x < W; x++) {
+        let v = 0.06 + 0.16 * Math.random() * Math.random() * 2;
+        for (const c of carriers) v += c.amp * bump(x, c.x, 1.6) * (0.75 + 0.25 * Math.random());
+        v += 0.62 * bump(x, bit ? 172 : 160, 3.2);
+        if (wideOn) v += 0.3 * bump(x, 205, 26) * (0.7 + 0.3 * Math.random());
+        const g = Math.min(1, v) ** 1.35 * 205;
+        const i = x * 4;
+        row[i] = row[i + 1] = row[i + 2] = g;
+        row[i + 3] = 255;
+      }
+      t++;
+    };
+
+    const rowBuf = new Uint8ClampedArray(W * 4);
+    const push = () => {
+      px.copyWithin(W * 4, 0, W * 4 * (H - 1));
+      newRow(rowBuf);
+      px.set(rowBuf, 0);
+    };
+    for (let i = 0; i < H; i++) push();
+    ctx.putImageData(img, 0, 0);
+
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setInterval(() => {
+        if (document.hidden) return;
+        push();
+        ctx.putImageData(img, 0, 0);
+      }, 70);
+    }
   }
+
+  document.querySelector(".notice__close")?.addEventListener("click", () => {
+    document.getElementById("notice")?.setAttribute("hidden", "");
+  });
 </script>

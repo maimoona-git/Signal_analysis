@@ -1,3 +1,5 @@
+> **Landing page update:** `/` now uses a separate black/white/grey direction (Archivo, big disc with a scrolling greyscale waterfall, modelled on a reference layout the user supplied). It lives in `src/styles/landing.css` and `src/layouts/LandingLayout.astro`. Everything below still describes `tokens.css`, `/web` and `/style-guide`.
+
 # Design direction — PS 26147 site
 
 Research notes and the resulting direction for `/site` (and, in Phase 5, `/web`).
@@ -64,20 +66,39 @@ phosphor-on-black would fight the "readable, accessible, modern" half of the bri
 | `--paper-100` | `#ece8df` | raised light surface (cards on light bg) |
 | `--ink-text` | `#e8ecef` | body text on dark backgrounds |
 | `--paper-text` | `#1b1f23` | body text on light backgrounds |
-| `--line` | `#3a4450` (dark) / `#c9c2b2` (light) | hairline borders, grid lines |
-| `--phosphor` | `#4f9d72` | primary accent — a dim, muted green (dialled back further than the first draft's `#3ddc84`; no neon, no bright saturated green) |
-| `--phosphor-dim` | `#3a7856` | darker still — borders, hover fills, rules |
-| `--amber` | `#b8863f` | secondary accent, used rarely — warnings, one badge variant |
+| `--line` | `#6b7684` (dark) / `#786e5a` (light) | hairline borders, grid lines |
+| `--phosphor` | `#46916f` | primary accent — a dim, muted green (dialled back further than the first draft's `#3ddc84`; no neon, no bright saturated green) |
+| `--phosphor-dim` | `#3a7856` | darker still — hover fills, rules |
+| `--amber` | `#a37a3e` | secondary accent, used rarely — warnings, one badge variant |
 
 Only two accent hues exist in the whole system, both warm/green phosphor-monitor
 tones — no blue, no navy, no purple anywhere in the palette.
 
-Contrast checked against WCAG AA: `--ink-text` on `--ink-950` and `--paper-text` on
-`--paper-50` both exceed 7:1; `--phosphor` and `--amber` are used only for large text,
-rules, icons, and non-text UI (never small body copy in an accent color on its own
-background), which is exactly where the retro palettes found in research tend to fail
-contrast checks — noted explicitly per `CLAUDE.md`'s call-out that retro palettes can
-be low-contrast, to be re-verified in Phase 6.
+**Phase 6 polish, measured (not eyeballed):** computed actual WCAG contrast ratios
+for every foreground/background pairing this system uses (sRGB relative luminance,
+the standard formula) rather than assuming the retro palette was fine. `--ink-text`/
+`--paper-text` on their own backgrounds both exceed 15:1 either way. Three real
+failures turned up and were fixed by re-picking the value, not by changing where it's
+used:
+- `--line` (the Instrument Panel motif's own hairline border) measured 1.9:1 (dark)
+  / 1.6:1 (light) against the page background it sits on — nowhere near WCAG 1.4.11's
+  3:1 minimum for a UI component boundary, meaning the panels' signature borders were
+  barely visible. Both re-picked to clear 4:1+.
+- `--phosphor` and `--amber` are both text at least once (log lines, stage numbers,
+  the primary button, an error message in `/web`'s shell) and a status dot at least
+  once (`Badge`) — the dot has to work on `--surface-raised` in EITHER scheme, and the
+  first draft's `--phosphor` measured only 2.7:1 against the light one. Both re-picked
+  as the single value each that clears 4.5:1 (text, on the dark scheme, where all the
+  text uses are) AND 3:1 (the dot, on both schemes' raised surface) at once, rather
+  than adding a second scheme-specific shade for one component.
+- The primary button used `--phosphor-dim` as its default (not just hover) fill with
+  `--ink-950` text — 3.6:1, under the 4.5:1 normal-text minimum, on what is the
+  single most important interactive element on the page. Moved to `--phosphor`
+  (5.0:1) with an inverted hover state, instead of a still-failing hover-only fix.
+
+This is exactly the retro-palette risk `CLAUDE.md` called out ahead of time — found
+by computing it, the same way Feature 2/4 in the main app's own build found their
+real statistical floors by measuring rather than assuming.
 
 ## Type
 

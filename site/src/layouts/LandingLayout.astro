@@ -1,0 +1,147 @@
+---
+import "../styles/landing.css";
+
+interface Props {
+  title: string;
+  description: string;
+}
+const { title, description } = Astro.props;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body>
+    <header class="nav">
+      <a href="/" class="nav__logo" aria-label="PS 26147, home"><b>PS</b> <span>26147</span></a>
+      <nav class="nav__links" aria-label="Primary">
+        <a href="#pipeline" class="nav__link">Pipeline</a>
+        <a href="#features" class="nav__link">Features</a>
+        <a href="#stack" class="nav__link">Built with</a>
+        <a href="/web/index.html" class="nav__launch">Launch app</a>
+      </nav>
+    </header>
+
+    <main>
+      <slot />
+    </main>
+
+    <footer class="footer on-black">
+      <div class="inner footer__inner">
+        <p>PS 26147. Signal analysis that runs entirely in your browser.</p>
+        <a href="/web/index.html">Launch app</a>
+      </div>
+    </footer>
+  </body>
+</html>
+
+<style is:global>
+  .nav {
+    position: absolute;
+    inset: 0 0 auto 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    padding: 1.5rem var(--gutter);
+  }
+
+  /* White text with difference blending reads white over the black disc and black over the page. */
+  .nav__logo {
+    color: #fff;
+    mix-blend-mode: difference;
+    font-size: 1.125rem;
+    font-stretch: 125%;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    text-decoration: none;
+  }
+
+  .nav__logo b {
+    font-weight: 800;
+  }
+
+  .nav__logo span {
+    font-weight: 300;
+  }
+
+  .nav__links {
+    display: flex;
+    align-items: center;
+    gap: clamp(1rem, 2.5vw, 2.25rem);
+  }
+
+  .nav__link {
+    color: var(--black);
+    font-size: 0.75rem;
+    font-weight: 700;
+    font-stretch: 112%;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    text-decoration: none;
+    padding: 0.4rem 0;
+    border-bottom: 2px solid transparent;
+  }
+
+  .nav__link:hover {
+    border-bottom-color: var(--black);
+  }
+
+  .nav__launch {
+    padding: 0.55rem 1.1rem;
+    border: 2px solid var(--black);
+    border-radius: 6px;
+    color: var(--black);
+    font-size: 0.75rem;
+    font-weight: 700;
+    font-stretch: 112%;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    text-decoration: none;
+  }
+
+  .nav__launch:hover {
+    background: var(--black);
+    color: var(--white);
+  }
+
+  .footer {
+    background: var(--black);
+    color: var(--on-black-muted);
+    font-size: 0.875rem;
+  }
+
+  .footer__inner {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+  }
+
+  .footer a {
+    color: var(--white);
+  }
+
+  @media (max-width: 52rem) {
+    .nav {
+      position: static;
+      background: var(--white);
+      border-bottom: 1px solid var(--grey-300);
+    }
+    .nav__logo {
+      color: var(--black);
+      mix-blend-mode: normal;
+    }
+    .nav__link {
+      display: none;
+    }
+  }
+</style>
