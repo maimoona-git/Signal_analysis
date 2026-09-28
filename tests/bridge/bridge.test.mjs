@@ -110,8 +110,11 @@ describe('bridge: file bytes in', () => {
   it('rejects bad input with a real Error carrying the C++ message', async () => {
     await assert.rejects(bridge.ingest(iqBytes([1, 2]), { filename: 'x.iq' }), (e) =>
       e instanceof Error && /sample rate is required/.test(e.message));
+    // The raw C++ message ("... not aligned to complex64 sample size ...") is rewritten
+    // into plain language by describe_exception (bridge/include/error_text.hpp) --
+    // found via a real user report of internal jargon leaking to the results panel.
     await assert.rejects(bridge.ingest(new Uint8Array([1, 2, 3]), { filename: 'odd.iq', sampleRate: 1 }), (e) =>
-      e instanceof Error && /not aligned/.test(e.message));
+      e instanceof Error && /\.IQ file/.test(e.message) && !/aligned/.test(e.message));
     await assert.rejects(bridge.ingest(new Uint8Array(64), { filename: 'bad.wav' }), (e) =>
       e instanceof Error && /RIFF\/WAVE/.test(e.message));
     const truncated = wavBytes().subarray(0, 30);

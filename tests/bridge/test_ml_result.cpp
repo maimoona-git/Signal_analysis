@@ -58,4 +58,31 @@ TEST_CASE("describe_exception turns out-of-memory into an actionable message and
     }
 }
 
+TEST_CASE("describe_exception explains a misclassified real-world capture in plain language") {
+    // Found via a real user report: the classifier guessed FSK for an ordinary
+    // downloaded WAV file, and the raw internal precondition message ("fsk_demodulate:
+    // samples length must be a multiple of sps") reached the results panel verbatim.
+    const std::string fsk = sigbridge::describe_exception(
+        std::runtime_error("fsk_demodulate: samples length must be a multiple of sps"));
+    CHECK(fsk.find("fsk_demodulate") == std::string::npos);   // no function/variable names shown to the user
+    CHECK(fsk.find("sps") == std::string::npos);
+    CHECK(fsk.find("FSK") != std::string::npos);              // still says which scheme, in plain terms
+    CHECK(fsk.find("classifier") != std::string::npos);       // and why: a wrong automatic guess
+
+    const std::string iq = sigbridge::describe_exception(
+        std::runtime_error("iq: file size not aligned to complex64 sample size: x.iq"));
+    CHECK(iq.find("x.iq") == std::string::npos);      // the raw message (with the bare filename) is gone
+    CHECK(iq.find(".IQ file") != std::string::npos);  // still says which file type, in plain terms
+
+    const std::string wav = sigbridge::describe_exception(
+        std::runtime_error("wav: data size not aligned to frame size: x.wav"));
+    CHECK(wav.find("WAV file") != std::string::npos);
+
+    // A message that merely happens to share a word (e.g. another function's own
+    // "sps" or "frame size" wording) is not rewritten -- only these three exact,
+    // known internal messages are recognised.
+    CHECK(sigbridge::describe_exception(std::runtime_error("some other error entirely")) ==
+          "some other error entirely");
+}
+
 TEST_MAIN()
