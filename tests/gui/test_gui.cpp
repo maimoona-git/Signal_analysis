@@ -834,6 +834,27 @@ TEST_CASE("main window: the pulse-shape combo box is sent to the backend") {
     CHECK(backend.requests.back().options.pulse_shape == sigcore::PulseShape::Rect);
 }
 
+TEST_CASE("main window: the symbol-rate suggestion label fills in after analysis, and clears on a new file") {
+    StubBackend backend;
+    MainWindow win(&backend);
+    win.loadFile("bpsk_ldpc_block.iq", demo_bytes("bpsk_ldpc_block.iq"));
+    CHECK(win.symbolRateSuggestionLabel()->text().isEmpty());  // nothing run yet
+    win.sampleRateEdit()->setText("8000");
+    win.samplesPerSymbolSpinBox()->setValue(4);
+    backend.force_fec_scheme = "ldpc";
+    backend.force_fec_msg_len = 64;
+
+    win.runAnalysis();
+    pump();
+    // A real capture, long enough for estimate_symbol_rate's own minimum -- the DSP
+    // claim itself (accuracy, confidence behaviour) is proved in tests/core/
+    // test_symbol_rate.cpp; this only checks the label is actually wired up.
+    CHECK(win.symbolRateSuggestionLabel()->text().contains("suggested:"));
+
+    win.loadFile("bpsk_ldpc_block.iq", demo_bytes("bpsk_ldpc_block.iq"));
+    CHECK(win.symbolRateSuggestionLabel()->text().isEmpty());  // cleared by the new load
+}
+
 TEST_CASE("main window: the IQ format combo box is sent to the backend") {
     StubBackend backend;
     MainWindow win(&backend);

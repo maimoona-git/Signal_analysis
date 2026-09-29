@@ -137,6 +137,14 @@ export class SigBridge {
    *                     'rrc' -- using the wrong one measurably hurts the lock, not just leaves it
    *                     unimproved. See core/include/recover.hpp's own comment on PulseShape.
    *
+   * result.symbolRateEstimate: a blind, always-attempted suggestion for samplesPerSymbol,
+   * { samplesPerSymbol, confidence } or null (capture too short -- under 256 samples --
+   * for a usable estimate). Advisory only: it is computed from the raw capture alone and
+   * never changes what samplesPerSymbol actually demodulates with -- see
+   * core/include/symbol_rate.hpp's own comment for the technique and its measured limits,
+   * in particular that a low confidence means the estimate itself should not be trusted,
+   * not just that it is noisy.
+   *
    * Resolves to the result object documented in bridge/README.md.
    */
   async runPipeline(source, { filename, ...options } = {}) {

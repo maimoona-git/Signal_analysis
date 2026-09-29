@@ -344,6 +344,60 @@ TEST_CASE("pulse_shape=Rect decodes a real-world unshaped capture end to end; Rr
     }
 }
 
+TEST_CASE("pipeline result carries a blind symbol-rate suggestion, advisory only") {
+    // Reuses the Rect-pulse impaired capture above: a real end-to-end signal, not a
+    // synthetic zero-order-hold test fixture, to actually exercise the blind estimator
+    // on something resembling a real capture. This is advisory only -- see
+    // PipelineResult::symbol_rate_estimate's own comment -- so the check here is just
+    // "is it close to the truth", not "does it change what gets decoded" (it never does:
+    // options.samples_per_symbol alone still controls demodulation, checked below by
+    // confirming demodulated_bits does not depend on the estimate being present).
+    const std::string message = "SYMBOL RATE ESTIMATION SANITY CHECK MESSAGE FOR THE PIPELINE";
+    Bits payload;
+    for (unsigned char ch : message)
+        for (int b = 7; b >= 0; --b) payload.push_back((ch >> b) & 1);
+    const Bits coded = fec_encode(payload, "viterbi");
+    const auto symbols = sigapp::modulate(coded, "bpsk");
+    const unsigned int sps = 8;
+    const auto impaired = make_rect_impaired_iq(symbols, sps, /*cfo=*/0.003f, /*noise_amp=*/0.02f,
+                                                /*start_offset=*/0, /*noise_seed=*/777);
+    const auto bytes = iq_bytes(impaired);
+
+    PipelineOptions opts;
+    opts.sample_rate = 8000.0;
+    opts.samples_per_symbol = sps;
+    const auto result = run_pipeline(bytes.data(), bytes.size(), "impaired.iq", opts, {"bpsk", 1.0});
+
+    CHECK(result.symbol_rate_estimate.has_value());
+    if (result.symbol_rate_estimate) {
+        const double rel_err = std::abs(result.symbol_rate_estimate->samples_per_symbol - static_cast<double>(sps)) / sps;
+        CHECK(rel_err < 0.05);
+        CHECK(result.symbol_rate_estimate->confidence > 0.2);
+    }
+
+    // Advisory only: giving the "wrong" nominal sps still demodulates with exactly
+    // that value, not the estimate -- the estimate never silently overrides it.
+    PipelineOptions wrong_opts = opts;
+    wrong_opts.samples_per_symbol = 3;  // deliberately not the true rate
+    const auto wrong_result = run_pipeline(bytes.data(), bytes.size(), "impaired.iq", wrong_opts, {"bpsk", 1.0});
+    CHECK(wrong_result.symbol_rate_estimate.has_value());  // the blind estimate still runs and still finds ~8
+    if (wrong_result.symbol_rate_estimate) {
+        CHECK(std::abs(wrong_result.symbol_rate_estimate->samples_per_symbol - static_cast<double>(sps)) / sps < 0.05);
+    }
+    CHECK(wrong_result.demodulated_bits.size() != result.demodulated_bits.size());  // demod used sps=3, not the estimate
+}
+
+TEST_CASE("pipeline result leaves the symbol-rate suggestion unset for a too-short capture") {
+    // Below estimate_symbol_rate's own 256-sample minimum: not a pipeline error, just
+    // no suggestion (see PipelineResult::symbol_rate_estimate's own comment).
+    std::vector<std::complex<float>> tiny(64, std::complex<float>(1.0f, 0.0f));
+    const auto bytes = iq_bytes(tiny);
+    PipelineOptions opts;
+    opts.sample_rate = 8000.0;
+    const auto result = run_pipeline(bytes.data(), bytes.size(), "tiny.iq", opts, {"bpsk", 1.0});
+    CHECK(!result.symbol_rate_estimate.has_value());
+}
+
 TEST_CASE("pipeline_prepare / pipeline_finish split matches run_pipeline") {
     const auto bytes = read_file(data_path("fsk_plain.iq"));
     PipelineOptions o;

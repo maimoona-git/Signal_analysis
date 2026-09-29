@@ -52,6 +52,15 @@ PipelineResult pipeline_finish(PipelinePrep prep, const Classification& classifi
 
     PipelineResult result;
 
+    // Real-world signal support: a blind suggestion, from the raw capture alone,
+    // before anything below assumes options.samples_per_symbol is actually right.
+    // Best-effort: too short a capture is not a pipeline error, just no suggestion.
+    try {
+        result.symbol_rate_estimate = sigcore::estimate_symbol_rate(prep.signal.samples);
+    } catch (const std::runtime_error&) {
+        // capture too short for a usable estimate -- leave symbol_rate_estimate unset
+    }
+
     // Linear demodulators want one sample per symbol. Two ways to get there: naive
     // decimation (default -- exact on this project's own synthetic captures, which
     // have no timing offset or carrier error to begin with), or, opted into via

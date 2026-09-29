@@ -29,6 +29,7 @@
 #include "raster.hpp"
 #include "recover.hpp"
 #include "signal_io.hpp"
+#include "symbol_rate.hpp"
 
 namespace sigapp {
 
@@ -149,6 +150,18 @@ struct PipelineResult {
     // bit-inversion of the true message -- see recover.hpp's own comment).
     bool recovery_used = false;
     std::optional<unsigned int> recovery_phase_ambiguity;
+
+    // Real-world signal support: a blind, always-attempted suggestion for
+    // samples_per_symbol, computed from the raw capture via
+    // sigcore::estimate_symbol_rate before any modulation-specific demod runs
+    // -- see that function's own comment for the technique and its measured
+    // limits. Advisory only: it never overrides options.samples_per_symbol,
+    // which stays a required, exact input (see that field's own comment) --
+    // this is here so the GUI can show a suggested value next to it, not to
+    // silently change what gets decoded. Left unset, not an error, when the
+    // capture is too short for a usable estimate (see estimate_symbol_rate's
+    // own minimum-length requirement).
+    std::optional<sigcore::SymbolRateEstimate> symbol_rate_estimate;
 };
 
 // Ingest and spectrogram. Throws (std::invalid_argument / std::runtime_error)

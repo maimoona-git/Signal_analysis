@@ -238,6 +238,17 @@ void MainWindow::buildToolbar() {
     samples_per_symbol_->setValue(1);
     toolbar->addWidget(samples_per_symbol_);
 
+    // Real-world signal support: a blind suggestion for the field above, filled in
+    // once an analysis finishes (see PipelineResult::symbol_rate_estimate's own
+    // comment) -- advisory only, never applied automatically, since the field stays
+    // a required, exact input for demodulation. Empty until then, and cleared again
+    // on the next file load.
+    symbol_rate_suggestion_ = new QLabel;
+    symbol_rate_suggestion_->setToolTip(
+        QStringLiteral("A blind estimate of samples/symbol from the raw capture alone, for reference -- "
+                       "not applied automatically."));
+    toolbar->addWidget(symbol_rate_suggestion_);
+
     // A second row: decoding-mode toggles. Split out from the row above (rather than
     // one long toolbar) because that row alone already matches the original app's
     // width, and each toggle added here since has made a single row overflow a
@@ -313,6 +324,7 @@ void MainWindow::loadFile(const QString& filename, const QByteArray& bytes) {
     frame_raster_text_->clear();
     rank_analysis_->clearData();
     rank_analysis_text_->clear();
+    symbol_rate_suggestion_->clear();
     last_result_.reset();
     param_search_result_ = sigapp::ParamSearchResult{};
     param_search_table_->setRowCount(0);
@@ -383,6 +395,14 @@ void MainWindow::finishAnalysis(quint64 run_id, bool ok, std::shared_ptr<const s
     frame_raster_text_->setPlainText(QString::fromStdString(sigapp::format_raster_text(result->raster)));
     rank_analysis_->setData(result->rank_analysis);
     rank_analysis_text_->setPlainText(QString::fromStdString(sigapp::format_rank_analysis_text(result->rank_analysis)));
+    if (result->symbol_rate_estimate) {
+        symbol_rate_suggestion_->setText(
+            QStringLiteral(" (suggested: %1, confidence %2%)")
+                .arg(result->symbol_rate_estimate->samples_per_symbol, 0, 'f', 1)
+                .arg(static_cast<int>(result->symbol_rate_estimate->confidence * 100.0 + 0.5)));
+    } else {
+        symbol_rate_suggestion_->clear();
+    }
     param_search_result_ = sigapp::ParamSearchResult{};
     param_search_table_->setRowCount(0);
     param_search_text_->clear();

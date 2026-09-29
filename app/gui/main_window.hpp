@@ -103,6 +103,9 @@ public:
     QPushButton* colorRangeAutoButton() const { return color_range_auto_button_; }
     QLineEdit* sampleRateEdit() const { return sample_rate_; }
     QSpinBox* samplesPerSymbolSpinBox() const { return samples_per_symbol_; }
+    // Real-world signal support: the blind samples/symbol suggestion label next to the
+    // spin box above, filled in after an analysis finishes -- empty text until then.
+    QLabel* symbolRateSuggestionLabel() const { return symbol_rate_suggestion_; }
     // Real-world signal support: how a raw .IQ/.sigmf-data file's samples are stored on
     // disk ("cf32", "ci16" or "cu8" -- see QComboBox::currentData()).
     QComboBox* iqFormatComboBox() const { return iq_format_; }
@@ -170,6 +173,7 @@ private:
     QPushButton* color_range_auto_button_ = nullptr;
     QLineEdit* sample_rate_ = nullptr;
     QSpinBox* samples_per_symbol_ = nullptr;
+    QLabel* symbol_rate_suggestion_ = nullptr;
     QComboBox* iq_format_ = nullptr;
 
     QString filename_;

@@ -395,6 +395,50 @@ describe('Real-world signal support (recoverTiming) through the bridge', () => {
   });
 });
 
+describe('Blind symbol-rate estimation (symbolRateEstimate) through the bridge', () => {
+  let bridge;
+  before(async () => {
+    bridge = await SigBridge.create(factory);
+    bridge.setClassifier(() => ({ classes: ['bpsk'], probabilities: [1] }));
+  });
+  after(() => bridge.clearClassifier());
+
+  it('reports a suggestion close to the true rate, and never changes demodulation', async () => {
+    // A zero-order-hold BPSK capture at a known sps -- the DSP claim itself (accuracy,
+    // confidence behaviour, harmonic disambiguation) is proved in tests/core/
+    // test_symbol_rate.cpp; this only checks the bridge plumbing end to end.
+    let seed = 71;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const sps = 8;
+    const n = 600;
+    const samples = new Float32Array(2 * n * sps);
+    for (let i = 0; i < n; i++) {
+      const bit = rnd() < 0.5 ? -1 : 1;
+      for (let k = 0; k < sps; k++) samples[2 * (i * sps + k)] = bit;
+    }
+    const file = new File([samples.buffer], 'zoh.iq');
+
+    const r = await bridge.runPipeline(file, { sampleRate: 8000, samplesPerSymbol: sps });
+    assert.ok(r.symbolRateEstimate !== null);
+    assert.ok(Math.abs(r.symbolRateEstimate.samplesPerSymbol - sps) / sps < 0.05);
+    assert.ok(r.symbolRateEstimate.confidence > 0.2);
+
+    // Advisory only: a deliberately "wrong" samplesPerSymbol still demodulates with
+    // exactly that value, not the estimate.
+    const wrong = await bridge.runPipeline(file, { sampleRate: 8000, samplesPerSymbol: 3 });
+    assert.ok(wrong.symbolRateEstimate !== null);
+    assert.ok(Math.abs(wrong.symbolRateEstimate.samplesPerSymbol - sps) / sps < 0.05);  // still finds ~8
+    assert.notEqual(wrong.demodulatedBits.length, r.demodulatedBits.length);  // but demod used sps=3
+  });
+
+  it('is null, not an error, for a capture too short for a usable estimate', async () => {
+    const samples = new Float32Array(2 * 64);  // well under the 256-sample minimum
+    const file = new File([samples.buffer], 'tiny.iq');
+    const r = await bridge.runPipeline(file, { sampleRate: 8000 });
+    assert.equal(r.symbolRateEstimate, null);
+  });
+});
+
 describe('Real-world signal support (raw IQ formats and .sigmf-data) through the bridge', () => {
   let bridge;
   before(async () => {
@@ -528,9 +572,14 @@ describe('runPipeline option validation and failure modes', () => {
     assert.deepEqual(Object.keys(r).sort(), ['boundaries', 'decodedBits', 'deinterleavedBits', 'demodulatedBits', 'detectedFec',
       'detectedInterleaver', 'detectionScore', 'fileFormat', 'filePath', 'numSamples', 'predictedConfidence', 'predictedModulation',
       'rankAnalysis', 'raster', 'recoveryPhaseAmbiguity', 'recoveryUsed', 'reencodeAgreement', 'sampleRate', 'samples',
-      'softDecodingUsed', 'spectrogram'].sort());
+      'softDecodingUsed', 'spectrogram', 'symbolRateEstimate'].sort());
     assert.equal(r.recoveryUsed, false);
     assert.equal(r.recoveryPhaseAmbiguity, null);
+    // iq() below is a short, cleanly-aligned synthetic capture -- long enough (>256
+    // samples) for the blind estimator to run and find something, unlike the too-short
+    // fixtures elsewhere in this file, so this only checks the shape, not the value.
+    assert.ok(r.symbolRateEstimate === null ||
+      (typeof r.symbolRateEstimate.samplesPerSymbol === 'number' && typeof r.symbolRateEstimate.confidence === 'number'));
     assert.equal(r.softDecodingUsed, false);
     assert.equal(r.deinterleavedBits, null);
     assert.equal(r.decodedBits, null);

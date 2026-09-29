@@ -440,6 +440,14 @@ val pipeline_result_to_js(const sigapp::PipelineResult& r) {
     out.set("reencodeAgreement", r.reencode_agreement ? val(*r.reencode_agreement) : val::null());
     out.set("recoveryUsed", r.recovery_used);
     out.set("recoveryPhaseAmbiguity", r.recovery_phase_ambiguity ? val(*r.recovery_phase_ambiguity) : val::null());
+    if (r.symbol_rate_estimate) {
+        val sre = val::object();
+        sre.set("samplesPerSymbol", r.symbol_rate_estimate->samples_per_symbol);
+        sre.set("confidence", r.symbol_rate_estimate->confidence);
+        out.set("symbolRateEstimate", sre);
+    } else {
+        out.set("symbolRateEstimate", val::null());
+    }
     out.set("raster", raster_out(r.raster));
     out.set("rankAnalysis", rank_analysis_out(r.rank_analysis));
     return out;
