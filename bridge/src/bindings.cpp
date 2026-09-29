@@ -185,7 +185,7 @@ sigapp::PipelineOptions options_from_js(const val& o) {
     if (!present(o)) return options;
     if (o.typeOf().as<std::string>() != "object") throw std::invalid_argument("pipeline options must be an object");
     reject_unknown_keys(o, {"sampleRate", "samplesPerSymbol", "demod", "interleaver", "fecScheme", "fecMsgLen",
-                            "headerPattern", "autoDetect", "softDecoding"}, "pipeline");
+                            "headerPattern", "autoDetect", "softDecoding", "recoverTiming"}, "pipeline");
 
     if (present(o["sampleRate"])) options.sample_rate = number_option(o["sampleRate"], "sampleRate");
     if (present(o["samplesPerSymbol"])) options.samples_per_symbol = uint_option(o["samplesPerSymbol"], "samplesPerSymbol");
@@ -199,6 +199,10 @@ sigapp::PipelineOptions options_from_js(const val& o) {
     if (present(o["softDecoding"])) {
         if (o["softDecoding"].typeOf().as<std::string>() != "boolean") throw std::invalid_argument("option softDecoding must be a boolean");
         options.soft_decoding = o["softDecoding"].as<bool>();
+    }
+    if (present(o["recoverTiming"])) {
+        if (o["recoverTiming"].typeOf().as<std::string>() != "boolean") throw std::invalid_argument("option recoverTiming must be a boolean");
+        options.recover_timing = o["recoverTiming"].as<bool>();
     }
 
     const val demod = o["demod"];
@@ -420,6 +424,8 @@ val pipeline_result_to_js(const sigapp::PipelineResult& r) {
     out.set("detectionScore", r.detection_score ? val(*r.detection_score) : val::null());
     out.set("softDecodingUsed", r.soft_decoding_used);
     out.set("reencodeAgreement", r.reencode_agreement ? val(*r.reencode_agreement) : val::null());
+    out.set("recoveryUsed", r.recovery_used);
+    out.set("recoveryPhaseAmbiguity", r.recovery_phase_ambiguity ? val(*r.recovery_phase_ambiguity) : val::null());
     out.set("raster", raster_out(r.raster));
     out.set("rankAnalysis", rank_analysis_out(r.rank_analysis));
     return out;

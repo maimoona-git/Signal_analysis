@@ -67,6 +67,18 @@ struct PipelineOptions {
     // path otherwise (PipelineResult::soft_decoding_used says which one actually ran),
     // so turning this on is always safe to try.
     bool soft_decoding = false;
+
+    // Real-world signal support: for a linear scheme (not FSK) with samples_per_symbol
+    // > 1, run sigcore::recover_linear (matched-filter timing recovery plus a
+    // decision-directed carrier/phase tracking loop) instead of naive `[0, sps, 2*sps,
+    // ...]` decimation, which only actually recovers a signal built with zero timing
+    // offset and zero carrier error -- this project's own synthetic captures, not a
+    // real recording. Off by default: it changes what gets decoded (a real capture's
+    // recovered stream is not sample-identical to naive decimation, and a carrier loop
+    // introduces its own, documented phase ambiguity -- see recover.hpp), so every
+    // existing golden-vector test's behavior stays exactly as it was unless this is
+    // turned on. PipelineResult::recovery_used says whether it actually ran.
+    bool recover_timing = false;
 };
 
 // What the ML classifier decided.
@@ -118,6 +130,15 @@ struct PipelineResult {
     // so it is directly comparable between them.
     bool soft_decoding_used = false;
     std::optional<double> reencode_agreement;
+
+    // Whether PipelineOptions::recover_timing actually ran (false if it was not
+    // requested, or requested but not applicable -- FSK, or samples_per_symbol <= 1,
+    // where there is no timing offset to recover in the first place). When it did,
+    // `recovery_phase_ambiguity` carries sigcore::RecoveryResult's own count, for the
+    // GUI to explain (e.g. "2" for BPSK/ASK2/OOK means the decode may be a constant
+    // bit-inversion of the true message -- see recover.hpp's own comment).
+    bool recovery_used = false;
+    std::optional<unsigned int> recovery_phase_ambiguity;
 };
 
 // Ingest and spectrogram. Throws (std::invalid_argument / std::runtime_error)

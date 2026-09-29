@@ -6,6 +6,7 @@
 #include "detect.hpp"
 #include "dsp.hpp"
 #include "fec_dispatch.hpp"
+#include "recover.hpp"
 #include "soft_demod.hpp"
 
 namespace sigapp {
@@ -49,18 +50,32 @@ PipelineResult pipeline_finish(PipelinePrep prep, const Classification& classifi
                                const PipelineOptions& options) {
     const std::string& scheme = classification.label;
 
-    // Linear demodulators want one sample per symbol and there is no timing
-    // recovery: decimate naively. FSK consumes the raw oversampled capture.
-    std::vector<std::complex<float>> decimated;
+    PipelineResult result;
+
+    // Linear demodulators want one sample per symbol. Two ways to get there: naive
+    // decimation (default -- exact on this project's own synthetic captures, which
+    // have no timing offset or carrier error to begin with), or, opted into via
+    // recover_timing, sigcore::recover_linear's matched-filter timing recovery plus
+    // carrier tracking, for a real capture that actually has both. FSK consumes the
+    // raw oversampled capture either way (see PipelineOptions::recover_timing's own
+    // comment on why FSK is out of scope for now).
+    std::vector<std::complex<float>> processed;
     const std::vector<std::complex<float>>* samples_for_demod = &prep.signal.samples;
     if (scheme != "fsk" && options.samples_per_symbol > 1) {
-        for (size_t i = 0; i < prep.signal.samples.size(); i += options.samples_per_symbol) {
-            decimated.push_back(prep.signal.samples[i]);
+        if (options.recover_timing) {
+            const auto recovered =
+                sigcore::recover_linear(prep.signal.samples, options.samples_per_symbol, linear_scheme_from_name(scheme));
+            processed = recovered.samples;
+            result.recovery_used = true;
+            result.recovery_phase_ambiguity = recovered.phase_ambiguity_count;
+        } else {
+            for (size_t i = 0; i < prep.signal.samples.size(); i += options.samples_per_symbol) {
+                processed.push_back(prep.signal.samples[i]);
+            }
         }
-        samples_for_demod = &decimated;
+        samples_for_demod = &processed;
     }
 
-    PipelineResult result;
     result.demodulated_bits = demodulate(*samples_for_demod, scheme, options.demod);
     // Feature 2 (SIH26147 extra feature): blind, before anything below tries to
     // de-interleave or decode it (both of which would remove exactly the redundancy

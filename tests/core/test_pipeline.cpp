@@ -17,7 +17,10 @@
 #include <string>
 #include <vector>
 
+#include <liquid/liquid.h>
+
 #include "fec_dispatch.hpp"
+#include "param_search.hpp"
 #include "pipeline.hpp"
 #include "../harness.hpp"
 #include "../testutil.hpp"
@@ -155,6 +158,110 @@ TEST_CASE("the demo capture round trip recovers the exact original message") {
     const auto r = run_pipeline(bytes.data(), bytes.size(), "bpsk_ldpc_block.iq", o, {"bpsk", 1.0});
     CHECK(r.decoded_bits.has_value());
     CHECK(bits_to_text(*r.decoded_bits) == "SIH2026!");
+}
+
+namespace {
+
+liquid_float_complex* as_liquid_recover(std::complex<float>* p) {
+    return reinterpret_cast<liquid_float_complex*>(p);
+}
+
+// The same realistic-impairment technique as test_recover.cpp (see its own comment
+// for why a proper matched RRC pulse, not this project's own zero-order-hold
+// convention, is what makes this a meaningful test of real-world capture support):
+// real transmit-side pulse shaping, a carrier offset, a non-symbol-aligned start,
+// and light noise.
+std::vector<std::complex<float>> make_impaired_iq(const std::vector<std::complex<float>>& symbols,
+                                                   unsigned int sps, float cfo, float noise_amp,
+                                                   unsigned int start_offset, uint64_t noise_seed) {
+    const unsigned int delay_symbols = 3;
+    const float rolloff = 0.35f;
+    firinterp_crcf tx = firinterp_crcf_create_prototype(LIQUID_FIRFILT_RRC, sps, delay_symbols, rolloff, 0.0f);
+    std::vector<std::complex<float>> shaped(symbols.size() * sps);
+    for (size_t i = 0; i < symbols.size(); ++i) {
+        std::complex<float> sym = symbols[i];
+        firinterp_crcf_execute(tx, *as_liquid_recover(&sym), as_liquid_recover(&shaped[i * sps]));
+    }
+    firinterp_crcf_destroy(tx);
+
+    std::vector<std::complex<float>> impaired;
+    impaired.reserve(shaped.size() - start_offset);
+    uint64_t rng = noise_seed;
+    auto next_noise = [&]() {
+        rng = rng * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<float>((rng >> 40) & 0xFFFFFF) / static_cast<float>(0xFFFFFF) - 0.5f;
+    };
+    for (size_t i = start_offset; i < shaped.size(); ++i) {
+        const float phase = -2.0f * static_cast<float>(M_PI) * cfo * static_cast<float>(i - start_offset);
+        std::complex<float> sample = shaped[i] * std::complex<float>(std::cos(phase), std::sin(phase));
+        sample += std::complex<float>(next_noise(), next_noise()) * noise_amp;
+        impaired.push_back(sample);
+    }
+    return impaired;
+}
+
+std::vector<uint8_t> iq_bytes(const std::vector<std::complex<float>>& samples) {
+    std::vector<uint8_t> out(samples.size() * 2 * sizeof(float));
+    std::memcpy(out.data(), samples.data(), out.size());
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("recover_timing decodes a real-world-impaired capture end to end; naive decimation cannot") {
+    // A genuine end-to-end claim, not just recover_linear in isolation (test_recover.cpp):
+    // real transmit pulse shaping, a carrier offset and an arbitrary start phase, fed
+    // through the exact same encode chain (FEC, modulation) and file format the real
+    // pipeline decodes. Neither path is told the exact FEC framing up front (a real
+    // capture's receiver would not know it either) -- both go through Parameter
+    // Search (Feature 1), the same as the GUI's own "Search Parameters" button and
+    // demo/README.md's Charlie/Delta/Echo cases, which exist precisely for a single,
+    // non-repeating message like this one. If naive decimation cannot be rescued even
+    // by Parameter Search but the recover_timing path can, that is the real gap this
+    // feature closes -- not a hand-picked alignment or a framing hint neither a real
+    // receiver nor this project's own existing tools would actually have.
+    const std::string message = "REAL WORLD CAPTURE VERIFIED OK, HOLD POSITION AND REPORT STATUS NOW";
+    Bits payload;
+    for (unsigned char ch : message)
+        for (int b = 7; b >= 0; --b) payload.push_back((ch >> b) & 1);
+
+    const Bits coded = fec_encode(payload, "viterbi");
+    const auto symbols = sigapp::modulate(coded, "bpsk");
+    const unsigned int sps = 8;
+    const auto impaired = make_impaired_iq(symbols, sps, /*cfo=*/0.0041f, /*noise_amp=*/0.02f,
+                                           /*start_offset=*/5, /*noise_seed=*/999);
+    const auto bytes = iq_bytes(impaired);
+
+    ParamSearchOptions search_opts;
+    search_opts.max_bit_offset = 60;  // recover_timing's output does not start bit-aligned to the codeword
+
+    PipelineOptions naive_opts;
+    naive_opts.sample_rate = 8000.0;
+    naive_opts.samples_per_symbol = sps;
+    const auto naive = run_pipeline(bytes.data(), bytes.size(), "impaired.iq", naive_opts, {"bpsk", 1.0});
+    const auto naive_search = search_params(naive.demodulated_bits, search_opts);
+    const bool naive_ok = naive_search.detected &&
+        bits_to_text(decode_candidate(naive.demodulated_bits, naive_search.candidates[naive_search.best_index])) == message;
+    CHECK(!naive_ok);  // proves this is a real gap: naive decimation cannot be rescued even by parameter search
+
+    PipelineOptions recovered_opts = naive_opts;
+    recovered_opts.recover_timing = true;
+    const auto recovered = run_pipeline(bytes.data(), bytes.size(), "impaired.iq", recovered_opts, {"bpsk", 1.0});
+    CHECK(recovered.recovery_used);
+    CHECK(recovered.recovery_phase_ambiguity == 2u);  // BPSK
+    const auto recovered_search = search_params(recovered.demodulated_bits, search_opts);
+    CHECK(recovered_search.detected);
+    if (recovered_search.detected) {
+        const auto& best = recovered_search.candidates[recovered_search.best_index];
+        // The matched filter's group delay costs a few symbols at *both* ends of the
+        // capture, not just the start (the "settle" skip already accounted for) -- so
+        // the very last character or two of a message run right up against the tail
+        // can legitimately be trimmed. A clean prefix match, not necessarily exact
+        // equality, is what a real receiver would actually get here too.
+        const auto got = bits_to_text(decode_candidate(recovered.demodulated_bits, best));
+        CHECK(message.rfind(got, 0) == 0);       // got is a genuine, uncorrupted prefix of message
+        CHECK(got.size() >= message.size() - 2);  // losing at most the last couple of characters
+    }
 }
 
 TEST_CASE("pipeline_prepare / pipeline_finish split matches run_pipeline") {

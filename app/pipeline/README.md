@@ -216,3 +216,57 @@ metric would need to re-synthesise the whole downstream waveform per hypothesis,
 is real additional work, not a small fix. Soft decoding therefore covers every linear
 scheme, which is what Viterbi/LDPC are paired with in practice; FSK stays hard-decision
 only, and the pipeline says so via `soft_decoding_used`.
+
+## Real-world signal support: carrier and timing recovery
+
+Everything above -- and every demo/test capture in this repo -- is built with this
+project's own synthetic convention: a linear scheme's samples land exactly one per
+symbol, at zero carrier offset, because nothing generated them any other way. A real
+recording (an actual RF capture, or a downloaded file that happens to carry raw or
+WAV-wrapped IQ) is not built that way: it has real transmit pulse shaping, an unknown
+fractional symbol-timing phase (possibly drifting), and a carrier frequency/phase
+offset from the receiver not being perfectly tuned. Demodulating it the same way this
+pipeline demodulates its own captures -- naive `[0, sps, 2*sps, ...]` decimation --
+only happens to work when none of that is present.
+
+`core/include/recover.hpp`'s `recover_linear` closes part of that gap, for linear
+schemes (PSK/QAM/ASK/OOK), using liquid-dsp's own building blocks rather than
+hand-rolled loops: an M-th-power coarse frequency estimate (via `dsp.hpp`'s existing
+FFT), an RRC-matched polyphase symbol synchronizer for timing recovery
+(`symsync_crcf`), and a decision-directed Costas loop (`nco_crcf` steered by the real
+modem's own phase-error estimate) for fine carrier tracking. `PipelineOptions::
+recover_timing` turns it on; off by default, since it changes what gets decoded and
+every existing golden-vector test assumes the old naive-decimation behaviour.
+`PipelineResult::recovery_used` says whether it actually ran.
+
+**Verified, not assumed:** `tests/core/test_recover.cpp` builds a signal impaired with
+liquid's own TX-side RRC interpolator (the correct counterpart to the RX-side matched
+filter here -- a cruder stand-in, tried first, turned out to prove nothing either way;
+see that file's own comment), a carrier offset, noise, and an arbitrary start phase,
+and confirms recovery locks onto it while naive decimation does not.
+`tests/core/test_pipeline.cpp` goes further, end to end: the same kind of impaired
+capture, through the exact same FEC-encode chain and file format the real pipeline
+decodes, run through `run_pipeline` and Feature 1 (Parameter Search, since a real
+capture's receiver does not know its exact framing any more than it knows its exact
+timing) -- naive decimation cannot be rescued even by Parameter Search, `recover_timing`
+decodes the message correctly.
+
+**Known limitations, found while building this, not assumed away:**
+- **Not blind.** The caller still supplies the nominal samples-per-symbol (already a
+  required input everywhere else in this pipeline); this recovers the timing *phase*
+  and carrier, not the symbol *rate* itself.
+- **FSK is out of scope here.** Its own frequency-discriminator demodulation is
+  already far more tolerant of timing/carrier error than PSK/QAM's phase-sensitive
+  slicing, and liquid's matched-filter symbol synchronizer used here is built for
+  linear modulations' pulse shapes, not FSK's tone bursts.
+- **Phase ambiguity.** PSK/QAM constellations are rotationally symmetric (BPSK:
+  2-fold, everything else here: treated as 4-fold, an approximation above QPSK -- see
+  `recover.hpp`'s own comment), and a decision-directed carrier loop can lock onto any
+  of them equally validly: the recovered stream is only correct up to one of that many
+  constant, unknown phase rotations. Resolving it needs a known sync word to test
+  rotations against, or differential coding -- neither implemented here. In practice
+  Parameter Search's bit-offset search plus its FEC re-encode-agreement scoring (see
+  Feature 1 above) already resolves this for a message with FEC, as the test above
+  demonstrates, by simply never ranking a garbled (wrong-rotation) decode highly; a
+  capture with no FEC at all has no such signal to check against and may come back
+  bit-inverted.

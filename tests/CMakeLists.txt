@@ -26,6 +26,11 @@ endfunction()
 sig_add_test(test_toolchain_smoke core/test_toolchain_smoke.cpp)
 sig_add_test(test_dsp core/test_dsp.cpp)
 sig_add_test(test_demod core/test_demod.cpp)
+sig_add_test(test_recover core/test_recover.cpp)
+# Builds its own realistically pulse-shaped test signal directly with liquid's own
+# TX-side RRC interpolator, to pair correctly with recover.cpp's RX-side matched
+# filter -- needs liquid's headers itself, not just sigcore_core's public API.
+target_include_directories(test_recover PRIVATE ${LIQUID_INCLUDE_DIR})
 sig_add_test(test_interleave core/test_interleave.cpp)
 sig_add_test(test_fec core/test_fec.cpp)
 sig_add_test(test_ingest core/test_ingest.cpp)
@@ -46,6 +51,9 @@ sig_test_uses_data(test_detect)
 sig_add_test(test_pipeline core/test_pipeline.cpp)
 target_link_libraries(test_pipeline PRIVATE sigpipeline)
 sig_test_uses_data(test_pipeline)
+# Its real-world-recovery test builds its own pulse-shaped signal with liquid's TX
+# interpolator directly -- see test_recover.cpp's target_include_directories for why.
+target_include_directories(test_pipeline PRIVATE ${LIQUID_INCLUDE_DIR})
 sig_add_test(test_result_text core/test_result_text.cpp)
 target_link_libraries(test_result_text PRIVATE sigpipeline)
 sig_test_uses_data(test_result_text)

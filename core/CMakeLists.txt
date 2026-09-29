@@ -22,6 +22,7 @@ set(SIGCORE_LIQUID_SOURCES
   src/demod.cpp
   src/ml_preprocess.cpp
   src/soft_demod.cpp
+  src/recover.cpp
 )
 
 add_library(sigcore_core STATIC ${SIGCORE_PORTABLE_SOURCES})

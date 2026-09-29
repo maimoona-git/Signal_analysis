@@ -113,6 +113,15 @@ export class SigBridge {
    *   softDecoding      Feature 3 (extra feature): decode from soft LLRs instead of hard bits,
    *                     when the modulation/FEC support it (falls back to hard silently otherwise;
    *                     result.softDecodingUsed says which one actually ran)
+   *   recoverTiming     Real-world signal support: for a linear scheme (not FSK) with
+   *                     samplesPerSymbol > 1, run matched-filter timing recovery plus carrier
+   *                     tracking instead of naive decimation, for a capture with real (unknown)
+   *                     timing offset and carrier error -- this project's own synthetic captures
+   *                     have neither, so this only matters for something recorded off the air.
+   *                     result.recoveryUsed says whether it actually ran; when it did,
+   *                     result.recoveryPhaseAmbiguity carries the count of equally-valid constant
+   *                     phase rotations the decode could be off by (e.g. 2 for BPSK means the
+   *                     message may come out with every bit flipped) -- see core/include/recover.hpp.
    *
    * Resolves to the result object documented in bridge/README.md.
    */
