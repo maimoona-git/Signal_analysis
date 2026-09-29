@@ -136,6 +136,25 @@ export class SigBridge {
    *                     shaping at all (simple NRZ/on-off pulses) and is NOT interchangeable with
    *                     'rrc' -- using the wrong one measurably hurts the lock, not just leaves it
    *                     unimproved. See core/include/recover.hpp's own comment on PulseShape.
+   *   findChannels      Real-world signal support: for a wideband capture where the signal of
+   *                     interest is not at baseband (a capture spanning more bandwidth than one
+   *                     signal occupies -- see core/include/channel_finder.hpp), blind-detect
+   *                     candidate channels before anything else runs. Off by default -- a real,
+   *                     separate mode, not attempted on every capture. Results land in
+   *                     result.channelCandidates (sorted strongest first); this alone changes
+   *                     nothing else about what gets decoded.
+   *   selectChannel     Which of result.channelCandidates to actually extract and process, by
+   *                     index -- ignored unless findChannels is also true. Normally used in a
+   *                     second call, once the first call's channelCandidates are known (the same
+   *                     "detect, then choose" shape as Feature 1's Parameter Search). When valid,
+   *                     the extracted channel's own samples/sampleRate REPLACE the raw capture
+   *                     before the spectrogram, symbolRateEstimate, or demodulation ever see it --
+   *                     see result.channelExtracted for whether it actually applied (false, not
+   *                     an error, for an out-of-range index).
+   *
+   * result.channelCandidates: [{ centerFreqHz, bandwidthHz, confidence }, ...], sorted strongest
+   * first; empty when findChannels was off, or on but nothing cleared the detection threshold.
+   * result.channelExtracted: whether selectChannel actually got applied (see its own comment).
    *
    * result.symbolRateEstimate: a blind, always-attempted suggestion for samplesPerSymbol,
    * { samplesPerSymbol, confidence } or null (capture too short -- under 256 samples --

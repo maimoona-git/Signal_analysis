@@ -186,7 +186,7 @@ sigapp::PipelineOptions options_from_js(const val& o) {
     if (o.typeOf().as<std::string>() != "object") throw std::invalid_argument("pipeline options must be an object");
     reject_unknown_keys(o, {"sampleRate", "iqFormat", "samplesPerSymbol", "demod", "interleaver", "fecScheme",
                             "fecMsgLen", "headerPattern", "autoDetect", "softDecoding", "recoverTiming",
-                            "pulseShape"}, "pipeline");
+                            "pulseShape", "findChannels", "selectChannel"}, "pipeline");
 
     if (present(o["sampleRate"])) options.sample_rate = number_option(o["sampleRate"], "sampleRate");
     if (present(o["iqFormat"])) {
@@ -218,6 +218,11 @@ sigapp::PipelineOptions options_from_js(const val& o) {
         else if (shape == "rect") options.pulse_shape = sigcore::PulseShape::Rect;
         else throw std::invalid_argument("option pulseShape must be 'rrc' or 'rect'");
     }
+    if (present(o["findChannels"])) {
+        if (o["findChannels"].typeOf().as<std::string>() != "boolean") throw std::invalid_argument("option findChannels must be a boolean");
+        options.find_channels_enabled = o["findChannels"].as<bool>();
+    }
+    if (present(o["selectChannel"])) options.select_channel = uint_option(o["selectChannel"], "selectChannel");
 
     const val demod = o["demod"];
     if (present(demod)) {
@@ -448,6 +453,16 @@ val pipeline_result_to_js(const sigapp::PipelineResult& r) {
     } else {
         out.set("symbolRateEstimate", val::null());
     }
+    val channels = val::array();
+    for (const auto& c : r.channel_candidates) {
+        val cc = val::object();
+        cc.set("centerFreqHz", c.center_freq_hz);
+        cc.set("bandwidthHz", c.bandwidth_hz);
+        cc.set("confidence", c.confidence);
+        channels.call<void>("push", cc);
+    }
+    out.set("channelCandidates", channels);
+    out.set("channelExtracted", r.channel_extracted);
     out.set("raster", raster_out(r.raster));
     out.set("rankAnalysis", rank_analysis_out(r.rank_analysis));
     return out;

@@ -41,6 +41,30 @@ PipelinePrep pipeline_prepare(const uint8_t* data, size_t size, const std::strin
                               const PipelineOptions& options) {
     PipelinePrep prep;
     prep.signal = load_signal(data, size, filename, options.sample_rate, options.iq_format);
+
+    // Real-world signal support: before the spectrogram or anything downstream sees
+    // the capture, optionally find and/or extract a channel -- see PipelineOptions::
+    // find_channels_enabled/select_channel's own comments for why this has to happen
+    // here, not in pipeline_finish. Best-effort: too short/degenerate a capture for
+    // find_channels leaves channel_candidates empty, not a pipeline error.
+    if (options.find_channels_enabled) {
+        try {
+            prep.channel_candidates = sigcore::find_channels(prep.signal.samples, prep.signal.sample_rate).channels;
+        } catch (const std::runtime_error&) {
+            // leave channel_candidates empty
+        }
+        if (options.select_channel && *options.select_channel < prep.channel_candidates.size()) {
+            const auto extracted = sigcore::extract_channel(prep.signal.samples, prep.signal.sample_rate,
+                                                             prep.channel_candidates[*options.select_channel]);
+            prep.signal.samples = std::move(extracted.samples);
+            prep.signal.sample_rate = extracted.sample_rate;
+            prep.signal.num_samples = prep.signal.samples.size();
+            prep.signal.duration_sec =
+                prep.signal.sample_rate > 0.0 ? static_cast<double>(prep.signal.num_samples) / prep.signal.sample_rate : 0.0;
+            prep.channel_extracted = true;
+        }
+    }
+
     prep.spectrogram = generate_spectrogram(prep.signal.samples, prep.signal.sample_rate,
                                             pipeline_nfft(prep.signal.num_samples));
     return prep;
@@ -169,6 +193,8 @@ PipelineResult pipeline_finish(PipelinePrep prep, const Classification& classifi
     result.file_format = prep.signal.format;
     result.samples = std::move(prep.signal.samples);
     result.spectrogram = std::move(prep.spectrogram);
+    result.channel_candidates = std::move(prep.channel_candidates);
+    result.channel_extracted = prep.channel_extracted;
     result.predicted_modulation = classification.label;
     result.predicted_confidence = classification.confidence;
     return result;

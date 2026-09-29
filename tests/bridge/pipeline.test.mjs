@@ -439,6 +439,68 @@ describe('Blind symbol-rate estimation (symbolRateEstimate) through the bridge',
   });
 });
 
+describe('Blind wideband channel finding (findChannels/selectChannel) through the bridge', () => {
+  let bridge;
+  before(async () => {
+    bridge = await SigBridge.create(factory);
+    bridge.setClassifier(() => ({ classes: ['bpsk'], probabilities: [1] }));
+  });
+  after(() => bridge.clearClassifier());
+
+  it('reports candidates without changing what gets decoded, and extracts the selected one', async () => {
+    // A zero-order-hold BPSK signal mixed up to +2000 Hz within an 8000 Hz wideband
+    // capture -- the DSP claims themselves (detection accuracy, extraction/decoding
+    // correctness) are proved in tests/core/test_channel_finder.cpp and
+    // tests/core/test_pipeline.cpp; this only checks the bridge plumbing end to end.
+    let seed = 71;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const sps = 8;
+    const n = 600;
+    const sampleRate = 8000;
+    const freqHz = 2000;
+    const samples = new Float32Array(2 * n * sps);
+    for (let i = 0; i < n; i++) {
+      const bit = rnd() < 0.5 ? -1 : 1;
+      for (let k = 0; k < sps; k++) samples[2 * (i * sps + k)] = bit;
+    }
+    for (let s = 0; s < n * sps; s++) {
+      const phase = 2 * Math.PI * (freqHz / sampleRate) * s;
+      const re = samples[2 * s], im = samples[2 * s + 1];
+      const c = Math.cos(phase), sn = Math.sin(phase);
+      samples[2 * s] = re * c - im * sn;
+      samples[2 * s + 1] = re * sn + im * c;
+    }
+    const file = new File([samples.buffer], 'wideband.iq');
+
+    const found = await bridge.runPipeline(file, { sampleRate, findChannels: true });
+    assert.ok(found.channelCandidates.length > 0);
+    assert.equal(found.channelExtracted, false);  // no selectChannel given
+    for (const c of found.channelCandidates) {
+      assert.equal(typeof c.centerFreqHz, 'number');
+      assert.equal(typeof c.bandwidthHz, 'number');
+      assert.equal(typeof c.confidence, 'number');
+    }
+    const index = found.channelCandidates.findIndex((c) => Math.abs(c.centerFreqHz - freqHz) < 500);
+    assert.ok(index >= 0);
+
+    const extracted = await bridge.runPipeline(file, { sampleRate, findChannels: true, selectChannel: index });
+    assert.equal(extracted.channelExtracted, true);
+    assert.ok(extracted.sampleRate < sampleRate);  // decimated down, not still the wideband rate
+  });
+
+  it('an out-of-range selectChannel is not an error, just not applied', async () => {
+    const r = await bridge.runPipeline(asFile('mod_bpsk.iq'),
+      { sampleRate: 8000, findChannels: true, selectChannel: 999 });
+    assert.equal(r.channelExtracted, false);
+  });
+
+  it('rejects a non-boolean findChannels', async () => {
+    await assert.rejects(
+      bridge.runPipeline(asFile('mod_bpsk.iq'), { sampleRate: 8000, findChannels: 1 }),
+      /findChannels must be a boolean/);
+  });
+});
+
 describe('Real-world signal support (raw IQ formats and .sigmf-data) through the bridge', () => {
   let bridge;
   before(async () => {
@@ -569,12 +631,15 @@ describe('runPipeline option validation and failure modes', () => {
 
   it('result carries the documented shape', async () => {
     const r = await bridge.runPipeline(iq(), { sampleRate: 4000, samplesPerSymbol: 2 });
-    assert.deepEqual(Object.keys(r).sort(), ['boundaries', 'decodedBits', 'deinterleavedBits', 'demodulatedBits', 'detectedFec',
-      'detectedInterleaver', 'detectionScore', 'fileFormat', 'filePath', 'numSamples', 'predictedConfidence', 'predictedModulation',
-      'rankAnalysis', 'raster', 'recoveryPhaseAmbiguity', 'recoveryUsed', 'reencodeAgreement', 'sampleRate', 'samples',
-      'softDecodingUsed', 'spectrogram', 'symbolRateEstimate'].sort());
+    assert.deepEqual(Object.keys(r).sort(), ['boundaries', 'channelCandidates', 'channelExtracted', 'decodedBits',
+      'deinterleavedBits', 'demodulatedBits', 'detectedFec', 'detectedInterleaver', 'detectionScore', 'fileFormat',
+      'filePath', 'numSamples', 'predictedConfidence', 'predictedModulation', 'rankAnalysis', 'raster',
+      'recoveryPhaseAmbiguity', 'recoveryUsed', 'reencodeAgreement', 'sampleRate', 'samples', 'softDecodingUsed',
+      'spectrogram', 'symbolRateEstimate'].sort());
     assert.equal(r.recoveryUsed, false);
     assert.equal(r.recoveryPhaseAmbiguity, null);
+    assert.deepEqual(r.channelCandidates, []);  // findChannels not requested
+    assert.equal(r.channelExtracted, false);
     // iq() below is a short, cleanly-aligned synthetic capture -- long enough (>256
     // samples) for the blind estimator to run and find something, unlike the too-short
     // fixtures elsewhere in this file, so this only checks the shape, not the value.

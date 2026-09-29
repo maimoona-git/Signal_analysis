@@ -297,3 +297,85 @@ signal that was never RRC-shaped to begin with, not just unhelpfully neutral.
   demonstrates, by simply never ranking a garbled (wrong-rotation) decode highly; a
   capture with no FEC at all has no such signal to check against and may come back
   bit-inverted.
+
+## Real-world signal support: blind symbol-rate estimation
+
+`recover_timing` above still needs the caller to supply an approximate nominal
+`samples_per_symbol` -- a real, required GUI/API input everywhere else in this
+pipeline too. `core/include/symbol_rate.hpp`'s `estimate_symbol_rate` closes that
+gap partway: a delay-and-multiply nonlinearity (`|x[n] - x[n-1]|^2`, which spikes at
+symbol boundaries for any modulation and pulse shape, unlike a plain envelope, which
+is flat for a constant-modulus scheme) followed by an FFT peak search finds a
+symbol-rate estimate blind, with a confidence score.
+`PipelineResult::symbol_rate_estimate` is always attempted (unset, not an error, for
+a capture under 256 samples) and is purely advisory -- it never overrides
+`PipelineOptions::samples_per_symbol`, which stays the value demodulation actually
+uses; it exists so the GUI can show a suggested value next to that field.
+
+**Verified, not assumed:** accurate to within 0.01% across pulse shapes, modulations
+(constant- and non-constant-modulus) and rates 2-32 in `tests/core/test_symbol_rate.
+cpp`, with a confidence metric that reads ~0 on pure noise (an earlier version read a
+misleadingly high ~0.7-0.8, an extreme-value-statistics artifact of searching many
+FFT bins, found and fixed by measuring against noise-only input directly) and
+degrades to ~0 exactly where the estimate itself stops being trustworthy, not just
+where it gets noisy.
+
+## Real-world signal support: blind wideband channel finding
+
+Everything above still assumes the capture itself is narrowband -- the signal of
+interest occupies (most of) the sample rate. A real capture spanning more bandwidth
+than one signal occupies (the PS's own stated case: data "recorded from different
+sensors and different locations") is not narrowband at all.
+`core/include/channel_finder.hpp` closes that gap in two steps: `find_channels`
+blindly detects candidate occupied sub-bands via PSD peak/plateau detection against
+a robust (median) noise floor, and `extract_channel` isolates one candidate to
+baseband (mix down, lowpass filter, decimate) so it can be fed into everything above
+exactly like a capture that was narrowband to begin with.
+
+Unlike `recover_timing`/`pulse_shape` (which only change *how* demodulation runs),
+picking a channel changes what the *rest of the result* reflects -- spectrogram,
+`symbol_rate_estimate`, demodulated bits all come from the extracted channel, not the
+original wideband capture -- so this is deliberately a two-step, explicit flow, the
+same shape as Feature 1's Parameter Search: `PipelineOptions::find_channels_enabled`
+alone reports `PipelineResult::channel_candidates` (sorted strongest first) without
+changing anything else; `PipelineOptions::select_channel` (an index into that list)
+then actually applies one, and `PipelineResult::channel_extracted` says whether it
+did (false, not an error, for an out-of-range index).
+
+**Verified, not assumed:** `tests/core/test_channel_finder.cpp` proves the actual
+end-to-end claim -- a real BPSK+FEC message embedded away from DC in a wideband
+capture, found, extracted, and decoded bit-perfectly through the exact same
+`recover_linear` this project already uses for a real-world capture -- plus
+multi-signal separation (two simultaneous channels correctly kept distinct) and
+correct silence on pure noise. `tests/core/test_pipeline.cpp` repeats the same claim
+through the full pipeline (`find` -> `extract` -> read `symbol_rate_estimate` for the
+*new*, decimated rate, since the original nominal `samples_per_symbol` was only ever
+true at the wideband rate -> `recover_timing`).
+
+**Two margins, both found by measuring, not assumed:** `extract_channel`'s lowpass
+filter cutoff needs headroom *past* the blindly-detected bandwidth (not sit exactly
+at it) -- a detected bandwidth is necessarily a bit narrower than a real pulse-shaped
+signal's true edge, and clipping that edge distorts the pulse shape before it ever
+reaches `recover_linear`'s own matched filter, the same mismatched-filter lesson
+`PulseShape::Rect`'s own comment describes, here from the wrong filter *width*
+instead of the wrong filter *family*. Separately, the decimation ratio needs its own
+headroom, because a caller only learns `samples_per_symbol` *after* extraction (via
+`estimate_symbol_rate` on the result): a mismatched bandwidth detection can leave
+that a non-integer ratio, and even a few percent of mismatch there was enough to
+fully desync `recover_linear`'s own fixed-rate symbol synchronizer over a real
+message's length, not just add noise. Both were found directly (a real embedded
+message that decoded cleanly failed almost totally, ~43% bit errors, chance level,
+with too-tight margins) and are documented in `channel_finder.cpp`'s own comment.
+
+**Known limitation, found while building this, not assumed away:** searching Feature
+1's Parameter Search over an *extracted* channel's demodulated bits inherits its own
+pre-existing sensitivity to bit-offset *parity* for a rate-1/2 convolutional code
+(one bit missing or misplaced desyncs the code's pairing entirely, the same
+underlying reason `PulseShape::Rect`'s own limitation above exists) -- confirmed
+directly while building this: the exact correct alignment for one real test capture
+happened to land on an odd bit offset, which is fundamentally undecodable for
+Viterbi regardless of how correct the recovery itself is (checked directly: the
+recovered bits matched the true transmitted stream with zero errors at that exact
+offset). This is a pre-existing fragility in Parameter Search's own Viterbi-candidate
+generation, not something channel finding introduces, and is left there rather than
+patched into this stage, for the same reason as `PulseShape::Rect`'s own note above.

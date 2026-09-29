@@ -15,6 +15,7 @@
 #include <QWheelEvent>
 
 #include <cmath>
+#include <complex>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -1070,6 +1071,64 @@ TEST_CASE("main window: the parameter-search button finds the real message auto-
     CHECK(!win.searchParamsButton()->isEnabled());
     CHECK(win.paramSearchTable()->rowCount() == 0);
     CHECK(win.paramSearchText()->toPlainText().isEmpty());
+}
+
+TEST_CASE("main window: the Channels tab finds, and applies, a channel from a wideband capture") {
+    // The DSP claims themselves (detection accuracy, extraction/decoding correctness)
+    // are proved in tests/core/test_channel_finder.cpp and tests/core/test_pipeline.cpp;
+    // this only checks the GUI plumbing -- checkbox -> options, table population,
+    // selecting a row and pressing the button re-runs analysis with that channel
+    // applied. A zero-order-hold signal (no RRC shaping) is enough for that, and
+    // avoids this test needing liquid's headers just to build one.
+    StubBackend backend;
+    backend.classification = {"bpsk", 1.0};
+    MainWindow win(&backend);
+
+    const auto bits = sigtest::random_bits(200, 5);
+    const auto symbols = sigapp::modulate(sigapp::Bits(bits.begin(), bits.end()), "bpsk");
+    const unsigned int sps = 8;
+    const double sample_rate = 8000.0;
+    const double freq_hz = 2000.0;
+    std::vector<std::complex<float>> shaped(symbols.size() * sps);
+    for (size_t i = 0; i < symbols.size(); ++i)
+        for (unsigned int k = 0; k < sps; ++k) shaped[i * sps + k] = symbols[i];
+    for (size_t i = 0; i < shaped.size(); ++i) {
+        const float phase = 2.0f * static_cast<float>(M_PI) * static_cast<float>(freq_hz / sample_rate) *
+                             static_cast<float>(i);
+        shaped[i] *= std::complex<float>(std::cos(phase), std::sin(phase));
+    }
+    QByteArray raw(reinterpret_cast<const char*>(shaped.data()), static_cast<qsizetype>(shaped.size() * sizeof(shaped[0])));
+    win.loadFile("wideband.iq", raw);
+
+    CHECK(!win.findChannelsCheckBox()->isChecked());  // off by default, like recover_timing
+    CHECK(win.channelTable()->rowCount() == 0);
+    CHECK(!win.extractChannelButton()->isEnabled());
+
+    win.sampleRateEdit()->setText("8000");
+    win.findChannelsCheckBox()->setChecked(true);
+    win.runAnalysis();
+    pump();
+    CHECK(win.channelTable()->rowCount() > 0);
+    CHECK(!win.extractChannelButton()->isEnabled());  // nothing selected yet
+
+    int row = -1;
+    for (int r = 0; r < win.channelTable()->rowCount(); ++r) {
+        if (std::abs(win.channelTable()->item(r, 0)->text().toDouble() - freq_hz) < 500.0) row = r;
+    }
+    CHECK(row >= 0);
+    if (row < 0) return;
+    win.channelTable()->setCurrentCell(row, 0);
+    CHECK(win.extractChannelButton()->isEnabled());
+
+    win.extractChannelButton()->click();
+    pump();
+    CHECK(backend.requests.back().options.select_channel.has_value());
+    CHECK(*backend.requests.back().options.select_channel == static_cast<size_t>(row));
+
+    // Loading a new file clears the channel search, same as Parameter Search's own.
+    win.loadFile("wideband.iq", raw);
+    CHECK(win.channelTable()->rowCount() == 0);
+    CHECK(!win.extractChannelButton()->isEnabled());
 }
 
 TEST_CASE("main window: the panel shows exactly what the ORIGINAL GUI showed for the same run") {

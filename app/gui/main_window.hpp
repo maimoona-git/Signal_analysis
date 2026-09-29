@@ -17,6 +17,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 
 #include "analysis_backend.hpp"
 #include "constellation_widget.hpp"
@@ -89,6 +90,16 @@ public:
     // should assume ("rrc" or "rect" -- see QComboBox::currentData()). Only matters
     // when recover timing is on.
     QComboBox* pulseShapeComboBox() const { return pulse_shape_; }
+    // Real-world signal support: blind wideband channel detection -- see
+    // sigcore::find_channels's own comment. Unlike recoverTiming/pulseShape (which
+    // only change how demodulation runs), turning this on and picking a channel
+    // replaces what the whole rest of the analysis sees (spectrogram, symbol-rate
+    // suggestion, demodulation) with that one extracted channel -- so, like Feature
+    // 1's Parameter Search, this is a real, explicit two-step: run once to see
+    // candidates, select one, then "Extract Selected Channel" to actually apply it.
+    QCheckBox* findChannelsCheckBox() const { return find_channels_; }
+    QTableWidget* channelTable() const { return channel_table_; }
+    QPushButton* extractChannelButton() const { return extract_channel_button_; }
     // Squares the capture before computing the waterfall (not the demodulated bits --
     // display only): collapses an M-fold symmetric modulation down to reveal an
     // otherwise-invisible carrier tone, the same M=2 trick recover_linear's own coarse
@@ -131,6 +142,9 @@ private:
     void failAnalysis(const QString& message);
     void runParamSearch();
     void showParamSearchCandidate(int row);
+    // Applies the currently-selected row in channel_table_ (real-world signal
+    // support): re-runs analysis with that candidate's index as select_channel.
+    void extractSelectedChannel();
     // Recomputes the waterfall from last_result_ -- squared or not, per
     // squareSignalCheckBox() -- then resets the colour-range controls to match (a
     // fresh WaterfallWidget::setData() always reverts to auto-range; see its comment).
@@ -166,6 +180,10 @@ private:
     QCheckBox* soft_decoding_ = nullptr;
     QCheckBox* recover_timing_ = nullptr;
     QComboBox* pulse_shape_ = nullptr;
+    QCheckBox* find_channels_ = nullptr;
+    QTableWidget* channel_table_ = nullptr;
+    QPushButton* extract_channel_button_ = nullptr;
+    std::optional<size_t> selected_channel_;  // persists across re-runs of the same file
     QCheckBox* square_signal_ = nullptr;
     QSlider* color_min_slider_ = nullptr;
     QSlider* color_max_slider_ = nullptr;

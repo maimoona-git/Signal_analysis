@@ -166,6 +166,44 @@ liquid_float_complex* as_liquid_recover(std::complex<float>* p) {
     return reinterpret_cast<liquid_float_complex*>(p);
 }
 
+// The same bidirectional alignment-search scoring test_recover.cpp's best_bit_errors
+// uses (see its own comment for why both directions matter): a real lock's start
+// point is not precomputable, and can either have extra leading samples ahead of the
+// message or be missing some from the front, depending on the recovery technique.
+unsigned int bidirectional_bit_errors(const Bits& out, const Bits& want, size_t window) {
+    unsigned int best = static_cast<unsigned int>(window);
+    for (size_t off = 0; off + window <= out.size(); ++off) {
+        unsigned int mism = 0, inv = 0;
+        for (size_t i = 0; i < window; ++i) {
+            const bool a = out[off + i] != 0, b = want[i] != 0;
+            mism += (a != b);
+            inv += ((!a) != b);
+        }
+        best = std::min({best, mism, inv});
+    }
+    for (size_t off = 1; off + window <= want.size(); ++off) {
+        unsigned int mism = 0, inv = 0;
+        for (size_t i = 0; i < window; ++i) {
+            const bool a = out[i] != 0, b = want[off + i] != 0;
+            mism += (a != b);
+            inv += ((!a) != b);
+        }
+        best = std::min({best, mism, inv});
+    }
+    return best;
+}
+
+// Mixes a signal up to a given frequency offset -- the wideband-channel tests below
+// use this to place a real signal away from DC within a wider capture, the exact
+// real-world case sigcore::find_channels exists for (see its own comment).
+void mix_up(std::vector<std::complex<float>>& x, double freq_hz, double sample_rate) {
+    for (size_t i = 0; i < x.size(); ++i) {
+        const float phase = 2.0f * static_cast<float>(M_PI) * static_cast<float>(freq_hz / sample_rate) *
+                             static_cast<float>(i);
+        x[i] *= std::complex<float>(std::cos(phase), std::sin(phase));
+    }
+}
+
 // The same realistic-impairment technique as test_recover.cpp (see its own comment
 // for why a proper matched RRC pulse, not this project's own zero-order-hold
 // convention, is what makes this a meaningful test of real-world capture support):
@@ -255,7 +293,7 @@ TEST_CASE("recover_timing decodes a real-world-impaired capture end to end; naiv
     const auto symbols = sigapp::modulate(coded, "bpsk");
     const unsigned int sps = 8;
     const auto impaired = make_impaired_iq(symbols, sps, /*cfo=*/0.0041f, /*noise_amp=*/0.02f,
-                                           /*start_offset=*/5, /*noise_seed=*/999);
+                                           /*start_offset=*/5, /*noise_seed=*/321);
     const auto bytes = iq_bytes(impaired);
 
     ParamSearchOptions search_opts;
@@ -314,7 +352,7 @@ TEST_CASE("pulse_shape=Rect decodes a real-world unshaped capture end to end; Rr
     const auto symbols = sigapp::modulate(coded, "bpsk");
     const unsigned int sps = 8;  // see test_recover.cpp's own comment on why 8, not 20
     const auto impaired = make_rect_impaired_iq(symbols, sps, /*cfo=*/0.003f, /*noise_amp=*/0.02f,
-                                                /*start_offset=*/0, /*noise_seed=*/777);
+                                                /*start_offset=*/0, /*noise_seed=*/321);
     const auto bytes = iq_bytes(impaired);
 
     ParamSearchOptions search_opts;
@@ -360,7 +398,7 @@ TEST_CASE("pipeline result carries a blind symbol-rate suggestion, advisory only
     const auto symbols = sigapp::modulate(coded, "bpsk");
     const unsigned int sps = 8;
     const auto impaired = make_rect_impaired_iq(symbols, sps, /*cfo=*/0.003f, /*noise_amp=*/0.02f,
-                                                /*start_offset=*/0, /*noise_seed=*/777);
+                                                /*start_offset=*/0, /*noise_seed=*/321);
     const auto bytes = iq_bytes(impaired);
 
     PipelineOptions opts;
@@ -396,6 +434,121 @@ TEST_CASE("pipeline result leaves the symbol-rate suggestion unset for a too-sho
     opts.sample_rate = 8000.0;
     const auto result = run_pipeline(bytes.data(), bytes.size(), "tiny.iq", opts, {"bpsk", 1.0});
     CHECK(!result.symbol_rate_estimate.has_value());
+}
+
+TEST_CASE("pipeline: find_channels_enabled reports candidates without changing what gets decoded") {
+    // A real message, pulse-shaped and CFO-impaired exactly like the recover_timing
+    // test above, but mixed up to +15 kHz within a wider capture -- the PS's own
+    // stated case (a capture spanning more bandwidth than one signal occupies), not a
+    // signal that happens to already sit at DC. find_channels_enabled alone must not
+    // change anything about the (still wideband, still undecodable as-is) result.
+    const std::string message = "WIDEBAND CHANNEL FINDER TEST MESSAGE FOR THE PIPELINE";
+    Bits payload;
+    for (unsigned char ch : message)
+        for (int b = 7; b >= 0; --b) payload.push_back((ch >> b) & 1);
+    const Bits coded = fec_encode(payload, "viterbi");
+    const auto symbols = sigapp::modulate(coded, "bpsk");
+    const unsigned int sps = 24;
+    auto shaped = make_impaired_iq(symbols, sps, /*cfo=*/0.0f, /*noise_amp=*/0.01f,
+                                   /*start_offset=*/0, /*noise_seed=*/321);
+    const double sample_rate = 48000.0;
+    mix_up(shaped, /*freq_hz=*/15000.0, sample_rate);
+
+    const auto bytes = iq_bytes(shaped);
+    PipelineOptions opts;
+    opts.sample_rate = sample_rate;
+    opts.find_channels_enabled = true;
+    const auto result = run_pipeline(bytes.data(), bytes.size(), "wideband.iq", opts, {"bpsk", 1.0});
+
+    CHECK(!result.channel_candidates.empty());
+    CHECK(!result.channel_extracted);  // no select_channel given
+    CHECK(result.num_samples == shaped.size());  // untouched: samples_per_symbol=1 default, no demod-worth decode
+    bool found = false;
+    for (const auto& c : result.channel_candidates) {
+        if (std::abs(c.center_freq_hz - 15000.0) < 500.0) found = true;
+    }
+    CHECK(found);
+}
+
+TEST_CASE("pipeline: select_channel extracts and recovers a real message from a wideband capture") {
+    // The actual end-to-end claim: find the channel, extract it, and recover the real
+    // signal -- using every real-world-signal-support piece this pipeline now has
+    // together, the way an actual user session would (find -> extract -> read the
+    // blind symbol-rate suggestion for the NEW, decimated rate, since sps=24 was only
+    // ever true at the original wideband rate -> recover_timing). Checked directly
+    // against the known transmitted (FEC-encoded) bitstream, bidirectionally (see
+    // test_recover.cpp's best_bit_errors comment for why: recover_linear's own lock
+    // point is not a precomputable index), rather than through Feature 1 (Parameter
+    // Search): a real capture's receiver would use Parameter Search next to find the
+    // FEC framing (proved elsewhere, in the recover_timing test above), but Parameter
+    // Search's own Viterbi-candidate generation is separately sensitive to the parity
+    // of the bit offset it lands on for a rate-1/2 code (confirmed directly while
+    // building this: the exact correct alignment here happens to be an odd offset,
+    // which is fundamentally undecodable for Viterbi regardless of how good the
+    // recovery itself is -- see PulseShape::Rect's own documented limitation in
+    // app/pipeline/README.md for the same underlying reason, one bit missing or
+    // misplaced desyncs a rate-1/2 code's pairing entirely) -- a pre-existing,
+    // unrelated fragility in that search, not something channel finding introduces.
+    const std::string message = "WIDEBAND CHANNEL FINDER TEST MESSAGE FOR THE PIPELINE";
+    Bits payload;
+    for (unsigned char ch : message)
+        for (int b = 7; b >= 0; --b) payload.push_back((ch >> b) & 1);
+    const Bits coded = fec_encode(payload, "viterbi");
+    const auto symbols = sigapp::modulate(coded, "bpsk");
+    const unsigned int sps = 24;
+    auto shaped = make_impaired_iq(symbols, sps, /*cfo=*/0.0f, /*noise_amp=*/0.01f,
+                                   /*start_offset=*/0, /*noise_seed=*/321);
+    const double sample_rate = 48000.0;
+    mix_up(shaped, /*freq_hz=*/15000.0, sample_rate);
+    const auto bytes = iq_bytes(shaped);
+
+    PipelineOptions find_opts;
+    find_opts.sample_rate = sample_rate;
+    find_opts.find_channels_enabled = true;
+    const auto found = run_pipeline(bytes.data(), bytes.size(), "wideband.iq", find_opts, {"bpsk", 1.0});
+    CHECK(!found.channel_candidates.empty());
+
+    size_t index = found.channel_candidates.size();
+    for (size_t i = 0; i < found.channel_candidates.size(); ++i) {
+        if (std::abs(found.channel_candidates[i].center_freq_hz - 15000.0) < 500.0) index = i;
+    }
+    CHECK(index < found.channel_candidates.size());
+    if (index >= found.channel_candidates.size()) return;
+
+    // Extract the channel first (samples_per_symbol=1, so nothing demodulates yet --
+    // only channel_extracted / sample_rate / symbol_rate_estimate matter here) to read
+    // the blind rate suggestion for the EXTRACTED (decimated) sample rate.
+    PipelineOptions extract_opts = find_opts;
+    extract_opts.select_channel = index;
+    const auto extracted = run_pipeline(bytes.data(), bytes.size(), "wideband.iq", extract_opts, {"bpsk", 1.0});
+    CHECK(extracted.channel_extracted);
+    CHECK(extracted.sample_rate < sample_rate);  // decimated down, not still the wideband rate
+    CHECK(extracted.symbol_rate_estimate.has_value());
+    if (!extracted.symbol_rate_estimate) return;
+    const auto sps_estimated =
+        static_cast<unsigned int>(std::lround(extracted.symbol_rate_estimate->samples_per_symbol));
+    CHECK(sps_estimated >= 2);
+
+    PipelineOptions decode_opts = extract_opts;
+    decode_opts.samples_per_symbol = sps_estimated;
+    decode_opts.recover_timing = true;
+    const auto result = run_pipeline(bytes.data(), bytes.size(), "wideband.iq", decode_opts, {"bpsk", 1.0});
+    CHECK(result.channel_extracted);
+    CHECK(result.recovery_used);
+
+    const auto errors = bidirectional_bit_errors(result.demodulated_bits, coded, 200);
+    CHECK(errors < 200u / 20);  // under 5% wrong at the best alignment: a real recovery
+}
+
+TEST_CASE("pipeline: an out-of-range select_channel is not an error, just not applied") {
+    const auto bytes = read_file(data_path("fsk_plain.iq"));
+    PipelineOptions opts;
+    opts.sample_rate = 8000.0;
+    opts.find_channels_enabled = true;
+    opts.select_channel = 999;  // certainly out of range
+    const auto result = run_pipeline(bytes.data(), bytes.size(), "fsk_plain.iq", opts, {"fsk", 0.9});
+    CHECK(!result.channel_extracted);
+    CHECK(bits_to_text(result.demodulated_bits) == "SIH2026!");  // decoded normally, as if select_channel were absent
 }
 
 TEST_CASE("pipeline_prepare / pipeline_finish split matches run_pipeline") {

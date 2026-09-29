@@ -24,6 +24,7 @@ set(SIGCORE_LIQUID_SOURCES
   src/soft_demod.cpp
   src/recover.cpp
   src/symbol_rate.cpp
+  src/channel_finder.cpp
 )
 
 add_library(sigcore_core STATIC ${SIGCORE_PORTABLE_SOURCES})

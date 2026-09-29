@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "bits.hpp"
+#include "channel_finder.hpp"
 #include "correlate.hpp"
 #include "demod_dispatch.hpp"
 #include "interleave_dispatch.hpp"
@@ -90,6 +91,29 @@ struct PipelineOptions {
     // recover_timing is on): see sigcore::PulseShape's own comment. Defaults to Rrc,
     // the common case for real transmitter hardware.
     sigcore::PulseShape pulse_shape = sigcore::PulseShape::Rrc;
+
+    // Real-world signal support: for a wideband capture where the signal of interest
+    // is not at baseband (see sigcore::find_channels's own comment -- the PS's own
+    // stated case of a capture "recorded from different sensors and different
+    // locations"), blind-detect candidate channels before anything else runs. Off by
+    // default, like recover_timing: it is a real, separate mode, not something to
+    // silently attempt on every capture. When on, results land in
+    // PipelineResult::channel_candidates (sorted strongest first); this alone changes
+    // nothing else about what gets decoded.
+    bool find_channels_enabled = false;
+
+    // Which of PipelineResult::channel_candidates to actually extract and process, by
+    // index -- ignored unless find_channels_enabled is also on. A caller normally runs
+    // once with find_channels_enabled alone to see the candidates, then again with
+    // select_channel set once they know which one they want (the same "detect, then
+    // choose" shape as Feature 1's Parameter Search, not a fully automatic pipeline).
+    // When set to a valid index, sigcore::extract_channel's output REPLACES the raw
+    // capture before the spectrogram, symbol-rate estimate, or demodulation ever see
+    // it -- so, unlike recover_timing/pulse_shape, this changes what every other part
+    // of the result reflects, not just how demodulation runs. See
+    // PipelineResult::channel_extracted for whether it actually applied (false, not an
+    // error, for an out-of-range index).
+    std::optional<size_t> select_channel;
 };
 
 // What the ML classifier decided.
@@ -101,6 +125,11 @@ struct Classification {
 struct PipelinePrep {
     LoadedSignal signal;
     Spectrogram spectrogram;
+
+    // Real-world signal support: see PipelineOptions::find_channels_enabled /
+    // select_channel's own comments -- these mirror onto PipelineResult unchanged.
+    std::vector<sigcore::ChannelCandidate> channel_candidates;
+    bool channel_extracted = false;
 };
 
 struct PipelineResult {
@@ -162,6 +191,17 @@ struct PipelineResult {
     // capture is too short for a usable estimate (see estimate_symbol_rate's
     // own minimum-length requirement).
     std::optional<sigcore::SymbolRateEstimate> symbol_rate_estimate;
+
+    // Real-world signal support: see PipelineOptions::find_channels_enabled's own
+    // comment. Empty when find_channels_enabled was off, or on but nothing cleared
+    // the detection threshold -- either way, not an error.
+    std::vector<sigcore::ChannelCandidate> channel_candidates;
+
+    // Whether PipelineOptions::select_channel actually got applied -- false (not an
+    // error) if it was not given, or given but out of range for channel_candidates.
+    // When true, `samples`, `sample_rate`, `spectrogram` and `symbol_rate_estimate`
+    // above all reflect the EXTRACTED channel, not the original wideband capture.
+    bool channel_extracted = false;
 };
 
 // Ingest and spectrogram. Throws (std::invalid_argument / std::runtime_error)

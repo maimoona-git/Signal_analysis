@@ -108,6 +108,29 @@ void MainWindow::buildUi() {
     search_layout->addWidget(param_search_text_);
     feature_tabs_->addTab(search_page, QStringLiteral("Parameter Search"));
 
+    // Real-world signal support: blind wideband channel detection. Like Parameter
+    // Search above, an explicit two-step -- "Find channels" (toolbar) populates this
+    // table on the next "Run Analysis", picking a row and pressing the button here
+    // re-runs analysis with that channel extracted and applied.
+    auto* channels_page = new QWidget;
+    auto* channels_layout = new QVBoxLayout(channels_page);
+    channels_layout->setContentsMargins(0, 0, 0, 0);
+    channel_table_ = new QTableWidget(0, 3);
+    channel_table_->setHorizontalHeaderLabels(
+        {QStringLiteral("Center Freq (Hz)"), QStringLiteral("Bandwidth (Hz)"), QStringLiteral("Confidence")});
+    channel_table_->horizontalHeader()->setStretchLastSection(true);
+    channel_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    channel_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    channel_table_->setSelectionMode(QAbstractItemView::SingleSelection);
+    extract_channel_button_ = new QPushButton(QStringLiteral("Extract Selected Channel"));
+    extract_channel_button_->setEnabled(false);
+    connect(channel_table_, &QTableWidget::currentCellChanged, this,
+           [this](int row, int, int, int) { extract_channel_button_->setEnabled(row >= 0); });
+    connect(extract_channel_button_, &QPushButton::clicked, this, [this] { extractSelectedChannel(); });
+    channels_layout->addWidget(channel_table_, /*stretch=*/1);
+    channels_layout->addWidget(extract_channel_button_);
+    feature_tabs_->addTab(channels_page, QStringLiteral("Channels"));
+
     // The waterfall's own colour-range controls (two dB sliders, a live-value label,
     // and a button back to auto-range) sit in a thin strip above the plot itself, so
     // they travel with it if the panel is dragged out or floated.
@@ -285,6 +308,16 @@ void MainWindow::buildToolbar() {
                        "assumes no shaping at all (simple NRZ/on-off pulses)."));
     mode_toolbar->addWidget(pulse_shape_);
 
+    // Real-world signal support: blind wideband channel detection. Off by default,
+    // like recover_timing -- a real, separate mode, not attempted on every capture.
+    // See the "Channels" feature tab for picking and applying a found candidate.
+    find_channels_ = new QCheckBox(QStringLiteral("Find channels"));
+    find_channels_->setToolTip(
+        QStringLiteral("For a wideband capture where the signal of interest is not at baseband: "
+                       "blind-detect candidate channels (see the Channels tab) before anything "
+                       "else runs."));
+    mode_toolbar->addWidget(find_channels_);
+
     // Squares the capture before computing the waterfall -- display only, does not touch
     // the demodulated bits. See squareSignalCheckBox()'s own comment.
     square_signal_ = new QCheckBox(QStringLiteral("Square signal"));
@@ -330,6 +363,9 @@ void MainWindow::loadFile(const QString& filename, const QByteArray& bytes) {
     param_search_table_->setRowCount(0);
     param_search_text_->clear();
     search_params_button_->setEnabled(false);
+    selected_channel_.reset();
+    channel_table_->setRowCount(0);
+    extract_channel_button_->setEnabled(false);
 }
 
 void MainWindow::runAnalysis() {
@@ -355,6 +391,8 @@ void MainWindow::runAnalysis() {
     request.options.recover_timing = recover_timing_->isChecked();
     request.options.pulse_shape = (pulse_shape_->currentData().toString() == QStringLiteral("rect"))
         ? sigcore::PulseShape::Rect : sigcore::PulseShape::Rrc;
+    request.options.find_channels_enabled = find_channels_->isChecked();
+    if (selected_channel_) request.options.select_channel = *selected_channel_;
 
     statusBar()->showMessage(QStringLiteral("Running analysis..."));
     running_ = true;
@@ -402,6 +440,24 @@ void MainWindow::finishAnalysis(quint64 run_id, bool ok, std::shared_ptr<const s
                 .arg(static_cast<int>(result->symbol_rate_estimate->confidence * 100.0 + 0.5)));
     } else {
         symbol_rate_suggestion_->clear();
+    }
+    // Real-world signal support: repopulate the Channels tab from this result's own
+    // candidates (empty when find_channels_ was off). Re-selecting the applied row
+    // (when channel_extracted) is purely a visual "this is what you're looking at"
+    // cue -- it does not itself trigger another run (extractSelectedChannel only runs
+    // from the button, not from a selection change).
+    {
+        const auto& channels = result->channel_candidates;
+        channel_table_->setRowCount(static_cast<int>(channels.size()));
+        for (int row = 0; row < static_cast<int>(channels.size()); ++row) {
+            const auto& c = channels[static_cast<size_t>(row)];
+            channel_table_->setItem(row, 0, new QTableWidgetItem(QString::number(c.center_freq_hz, 'f', 1)));
+            channel_table_->setItem(row, 1, new QTableWidgetItem(QString::number(c.bandwidth_hz, 'f', 1)));
+            channel_table_->setItem(row, 2, new QTableWidgetItem(QString::number(c.confidence, 'f', 3)));
+        }
+        if (result->channel_extracted && selected_channel_ && *selected_channel_ < channels.size()) {
+            channel_table_->selectRow(static_cast<int>(*selected_channel_));
+        }
     }
     param_search_result_ = sigapp::ParamSearchResult{};
     param_search_table_->setRowCount(0);
@@ -455,6 +511,17 @@ void MainWindow::updateColorRangeFromSliders() {
     if (lo >= hi) return;  // dragging through each other mid-gesture; WaterfallWidget rejects this anyway
     waterfall_->setColorRange(static_cast<double>(lo), static_cast<double>(hi));
     color_range_label_->setText(QStringLiteral("%1 .. %2 dB").arg(lo).arg(hi));
+}
+
+void MainWindow::extractSelectedChannel() {
+    const int row = channel_table_->currentRow();
+    if (row < 0 || running_ || filename_.isEmpty()) return;
+    // Unlike showParamSearchCandidate (a pure local recompute from bits already in
+    // hand), applying a channel changes what the raw capture itself feeds into
+    // ingest/demod -- see PipelineOptions::select_channel's own comment -- so this
+    // has to re-run the whole analysis, not just redraw from last_result_.
+    selected_channel_ = static_cast<size_t>(row);
+    runAnalysis();
 }
 
 void MainWindow::runParamSearch() {
