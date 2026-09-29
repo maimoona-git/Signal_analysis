@@ -7,6 +7,14 @@
 
 namespace sigcore {
 
+// The transmit pulse shape a real capture's timing recovery has to match -- found to
+// matter, not assumed: an early version of this recovery always assumed Rrc, and on a
+// genuinely rectangular-pulse (unshaped NRZ) real capture -- PySDR's own
+// bpsk_rect_20sps.sigmf-data test file, in particular -- that RRC-matched filter's own
+// mismatch against the true pulse shape made naive decimation's already-clean lock
+// measurably *worse*, not better. See recover_linear's own comment for which is which.
+enum class PulseShape { Rrc, Rect };
+
 // Carrier and timing recovery for linear modulations (PSK/QAM/ASK/OOK), for a real
 // capture: samples that are oversampled at (approximately) `sps` samples per symbol
 // but, unlike this project's own synthetic captures, are not already phase-aligned
@@ -42,7 +50,18 @@ struct RecoveryResult {
 
 // Throws std::runtime_error if `raw` is empty or `sps < 2` (nothing to recover: at
 // sps <= 1 there is no timing offset to correct).
+//  pulse: Rrc (default) uses a root-raised-cosine matched polyphase symbol
+//         synchronizer -- the right choice for a real transmitter that pulse-shapes
+//         its output, which is the common case for actual RF hardware.
+//         Rect assumes no transmit pulse shaping at all (simple NRZ/on-off pulses):
+//         an integrate-and-dump (boxcar) filter, at whichever of the `sps` possible
+//         sample phases gives the largest average symbol magnitude (the phase with
+//         the most "eye opening", i.e. the least inter-symbol interference) -- the
+//         standard technique for an unshaped pulse, and NOT interchangeable with Rrc:
+//         an RRC filter is not a matched filter for a rectangular pulse, and using it
+//         on one measurably hurts the lock rather than helping it (see PulseShape's
+//         own comment).
 RecoveryResult recover_linear(const std::vector<std::complex<float>>& raw, unsigned int sps,
-                              ModulationScheme scheme);
+                              ModulationScheme scheme, PulseShape pulse = PulseShape::Rrc);
 
 }  // namespace sigcore

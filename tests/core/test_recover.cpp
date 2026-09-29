@@ -67,7 +67,97 @@ std::vector<cf> make_impaired_capture(const std::vector<cf>& symbols, unsigned i
     return impaired;
 }
 
+// Zero-order-hold (rectangular) pulses -- no transmit pulse shaping at all -- plus a
+// carrier offset and light noise: the exact shape of PySDR's own real
+// bpsk_rect_20sps.sigmf-data test file (see the session notes this was found against),
+// which is what motivated PulseShape existing at all -- Rrc mode (the only mode before
+// this) measurably made this kind of signal *worse* than doing nothing, because an RRC
+// filter is not a matched filter for a pulse that was never RRC-shaped to begin with.
+std::vector<cf> make_rect_impaired_capture(const std::vector<cf>& symbols, unsigned int sps, float cfo,
+                                           float noise_amp, unsigned int start_offset, uint64_t noise_seed) {
+    std::vector<cf> held(symbols.size() * sps);
+    for (size_t i = 0; i < symbols.size(); ++i)
+        for (unsigned int k = 0; k < sps; ++k) held[i * sps + k] = symbols[i];
+
+    std::vector<cf> impaired;
+    impaired.reserve(held.size() - start_offset);
+    uint64_t rng = noise_seed;
+    auto next_noise = [&]() {
+        rng = rng * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<float>((rng >> 40) & 0xFFFFFF) / static_cast<float>(0xFFFFFF) - 0.5f;
+    };
+    for (size_t i = start_offset; i < held.size(); ++i) {
+        const float phase = -2.0f * static_cast<float>(M_PI) * cfo * static_cast<float>(i - start_offset);
+        cf sample = held[i] * cf(std::cos(phase), std::sin(phase));
+        sample += cf(next_noise(), next_noise()) * noise_amp;
+        impaired.push_back(sample);
+    }
+    return impaired;
+}
+
+// The same alignment-search scoring test_recover.cpp's other test uses (see its own
+// comment): a real lock's start point is not precomputable, so this searches for the
+// best-matching window rather than assuming index 0, for both phase hypotheses --
+// and in both directions, since a real capture can just as easily start with extra
+// leading samples ahead of the message (recovered_bits[off+i] vs want[i]) as it can
+// start partway into the message, having lost its first few bits to trimming or a
+// timing-recovery lock point that lands on the first *complete* symbol rather than
+// the first symbol overall (want[off+i] vs recovered_bits[i]) -- searching only one
+// direction silently misses the other and reports a false failure.
+unsigned int best_bit_errors(const std::vector<uint8_t>& recovered_bits, const std::vector<uint8_t>& want, size_t window) {
+    unsigned int best = static_cast<unsigned int>(window);
+    for (size_t off = 0; off + window <= recovered_bits.size() && window <= want.size(); ++off) {
+        unsigned int mismatches = 0, inverted = 0;
+        for (size_t i = 0; i < window; ++i) {
+            const bool a = recovered_bits[off + i] != 0;
+            const bool b = want[i] != 0;
+            mismatches += (a != b);
+            inverted += ((!a) != b);
+        }
+        best = std::min({best, mismatches, inverted});
+        if (best == 0) return best;
+    }
+    for (size_t off = 1; off + window <= want.size() && window <= recovered_bits.size(); ++off) {
+        unsigned int mismatches = 0, inverted = 0;
+        for (size_t i = 0; i < window; ++i) {
+            const bool a = recovered_bits[i] != 0;
+            const bool b = want[off + i] != 0;
+            mismatches += (a != b);
+            inverted += ((!a) != b);
+        }
+        best = std::min({best, mismatches, inverted});
+        if (best == 0) break;
+    }
+    return best;
+}
+
 }  // namespace
+
+TEST_CASE("recover_linear: PulseShape::Rect beats Rrc on an unshaped (rectangular) real capture") {
+    const auto bits = random_bits(1600, /*seed=*/11);
+    const auto symbols = linear_modulate(bits, ModulationScheme::BPSK);
+    // sps=8, not PySDR's literal 20 (see make_rect_impaired_capture's own comment for
+    // what motivated this test): at 20 samples/symbol there's enough oversampling
+    // margin that a mismatched RRC filter's ISI doesn't move any decision past the
+    // slicer boundary either -- the gap is real but sps-dependent, and 8 is where it
+    // is reliably measurable without relying on a lucky noise draw.
+    const unsigned int sps = 8;
+    const auto impaired = make_rect_impaired_capture(symbols, sps, /*cfo=*/0.003f, /*noise_amp=*/0.02f,
+                                                      /*start_offset=*/7, /*noise_seed=*/777);
+
+    const auto rrc_result = recover_linear(impaired, sps, ModulationScheme::BPSK, PulseShape::Rrc);
+    const auto rrc_bits = linear_demodulate(rrc_result.samples, ModulationScheme::BPSK);
+    const auto rrc_errors = best_bit_errors(rrc_bits, bits, 400);
+
+    const auto rect_result = recover_linear(impaired, sps, ModulationScheme::BPSK, PulseShape::Rect);
+    const auto rect_bits = linear_demodulate(rect_result.samples, ModulationScheme::BPSK);
+    const auto rect_errors = best_bit_errors(rect_bits, bits, 400);
+
+    // The actual claim: the right pulse-shape mode gives a clean decode where the
+    // wrong one measurably does not -- not just "is better", but "actually works".
+    CHECK(rect_errors < 400u / 20);  // under 5% wrong at the best alignment: a real decode
+    CHECK(rect_errors < rrc_errors);  // and clearly better than using the wrong filter
+}
 
 TEST_CASE("recover_linear fixes a pulse-shaped, offset, CFO-impaired BPSK capture naive decimation gets wrong") {
     const auto bits = random_bits(1600, /*seed=*/7);

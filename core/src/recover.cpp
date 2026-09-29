@@ -83,10 +83,47 @@ std::vector<std::complex<float>> mix_by(const std::vector<std::complex<float>>& 
     return out;
 }
 
+// Timing recovery for a Rect (unshaped NRZ) pulse: integrate-and-dump at each of the
+// `sps` possible sample phases, and keep the one whose average symbol magnitude is
+// largest. Mean magnitude, not mean value, so this does not need the carrier phase
+// already resolved (a rotating, not-yet-phase-locked constellation still averages to
+// a large magnitude at the correctly-aligned phase, and toward zero at a misaligned
+// one, since a misaligned integration window straddles two different symbols'
+// worth of signal and partially cancels) -- the standard "maximum eye opening"
+// technique for a pulse with no matched filter to lock onto instead.
+std::vector<std::complex<float>> integrate_and_dump(const std::vector<std::complex<float>>& x, unsigned int sps) {
+    unsigned int best_phase = 0;
+    double best_score = -1.0;
+    for (unsigned int phase = 0; phase < sps; ++phase) {
+        const size_t n = (x.size() > phase) ? (x.size() - phase) / sps : 0;
+        if (n == 0) continue;
+        double sum_mag = 0.0;
+        for (size_t k = 0; k < n; ++k) {
+            std::complex<float> acc(0.0f, 0.0f);
+            for (unsigned int j = 0; j < sps; ++j) acc += x[phase + k * sps + j];
+            sum_mag += std::abs(acc);
+        }
+        const double score = sum_mag / static_cast<double>(n);
+        if (score > best_score) {
+            best_score = score;
+            best_phase = phase;
+        }
+    }
+
+    const size_t n = (x.size() > best_phase) ? (x.size() - best_phase) / sps : 0;
+    std::vector<std::complex<float>> out(n);
+    for (size_t k = 0; k < n; ++k) {
+        std::complex<float> acc(0.0f, 0.0f);
+        for (unsigned int j = 0; j < sps; ++j) acc += x[best_phase + k * sps + j];
+        out[k] = acc / static_cast<float>(sps);
+    }
+    return out;
+}
+
 }  // namespace
 
 RecoveryResult recover_linear(const std::vector<std::complex<float>>& raw, unsigned int sps,
-                              ModulationScheme scheme) {
+                              ModulationScheme scheme, PulseShape pulse) {
     if (raw.empty()) {
         throw std::runtime_error("recover_linear: samples is empty");
     }
@@ -102,23 +139,30 @@ RecoveryResult recover_linear(const std::vector<std::complex<float>>& raw, unsig
     const float coarse_cfo = estimate_coarse_cfo(raw, m_power);
     const auto mixed = mix_by(raw, coarse_cfo);
 
-    // 2. Timing recovery: an RRC-matched polyphase symbol synchronizer, which both
-    // filters and resamples to (as close as it can lock to) exactly one output
+    // 2. Timing recovery. Rrc: an RRC-matched polyphase symbol synchronizer, which
+    // both filters and resamples to (as close as it can lock to) exactly one output
     // sample per input symbol, tracking whatever the actual (possibly fractional,
     // possibly drifting) timing offset turns out to be -- unlike naive decimation,
-    // which only ever samples at a fixed, assumed-zero phase.
-    const unsigned int delay_symbols = 3;
-    const float rolloff = 0.35f;
-    const unsigned int num_filters = 32;
-    symsync_crcf sync = symsync_crcf_create_rnyquist(LIQUID_FIRFILT_RRC, sps, delay_symbols, rolloff, num_filters);
-    symsync_crcf_set_lf_bw(sync, 0.01f);
+    // which only ever samples at a fixed, assumed-zero phase. Rect: see
+    // integrate_and_dump's own comment -- a different technique entirely, for a
+    // pulse shape Rrc is the wrong matched filter for (see PulseShape's comment).
+    std::vector<std::complex<float>> timed;
+    if (pulse == PulseShape::Rrc) {
+        const unsigned int delay_symbols = 3;
+        const float rolloff = 0.35f;
+        const unsigned int num_filters = 32;
+        symsync_crcf sync = symsync_crcf_create_rnyquist(LIQUID_FIRFILT_RRC, sps, delay_symbols, rolloff, num_filters);
+        symsync_crcf_set_lf_bw(sync, 0.01f);
 
-    std::vector<std::complex<float>> timed(mixed.size());
-    unsigned int n_written = 0;
-    symsync_crcf_execute(sync, const_cast<liquid_float_complex*>(as_liquid(const_cast<std::complex<float>*>(mixed.data()))),
-                         static_cast<unsigned int>(mixed.size()), as_liquid(timed.data()), &n_written);
-    timed.resize(n_written);
-    symsync_crcf_destroy(sync);
+        timed.resize(mixed.size());
+        unsigned int n_written = 0;
+        symsync_crcf_execute(sync, const_cast<liquid_float_complex*>(as_liquid(const_cast<std::complex<float>*>(mixed.data()))),
+                             static_cast<unsigned int>(mixed.size()), as_liquid(timed.data()), &n_written);
+        timed.resize(n_written);
+        symsync_crcf_destroy(sync);
+    } else {
+        timed = integrate_and_dump(mixed, sps);
+    }
 
     // 3. Fine carrier/phase tracking: a decision-directed Costas loop, using the same
     // modem object's own phase-error estimate (liquid's standard technique) to steer
