@@ -80,8 +80,11 @@ val state() {
 
     val waterfall = val::object();
     waterfall.set("hasData", g_window->waterfall()->hasData());
-    waterfall.set("frames", g_window->waterfall()->hasData() ? g_window->waterfall()->image().width() : 0);
-    waterfall.set("nfft", g_window->waterfall()->hasData() ? g_window->waterfall()->image().height() : 0);
+    // Frequency is the image's width now, time its height (see WaterfallWidget's own
+    // class comment on the axis swap) -- these two fields keep their old meaning
+    // (frame count, FFT size), just from the other dimension.
+    waterfall.set("frames", g_window->waterfall()->hasData() ? g_window->waterfall()->image().height() : 0);
+    waterfall.set("nfft", g_window->waterfall()->hasData() ? g_window->waterfall()->image().width() : 0);
     waterfall.set("plot", rect_in_window(w, g_window->waterfall(), g_window->waterfall()->plotRect()));
     s.set("waterfall", waterfall);
 
