@@ -31,6 +31,10 @@ sig_add_test(test_recover core/test_recover.cpp)
 # TX-side RRC interpolator, to pair correctly with recover.cpp's RX-side matched
 # filter -- needs liquid's headers itself, not just sigcore_core's public API.
 target_include_directories(test_recover PRIVATE ${LIQUID_INCLUDE_DIR})
+sig_add_test(test_symbol_rate core/test_symbol_rate.cpp)
+# Builds its own pulse-shaped test signals directly with liquid's TX-side
+# interpolator -- see test_recover.cpp's target_include_directories for why.
+target_include_directories(test_symbol_rate PRIVATE ${LIQUID_INCLUDE_DIR})
 sig_add_test(test_interleave core/test_interleave.cpp)
 sig_add_test(test_fec core/test_fec.cpp)
 sig_add_test(test_ingest core/test_ingest.cpp)
