@@ -40,7 +40,7 @@ unsigned int pipeline_nfft(size_t num_samples) {
 PipelinePrep pipeline_prepare(const uint8_t* data, size_t size, const std::string& filename,
                               const PipelineOptions& options) {
     PipelinePrep prep;
-    prep.signal = load_signal(data, size, filename, options.sample_rate);
+    prep.signal = load_signal(data, size, filename, options.sample_rate, options.iq_format);
     prep.spectrogram = generate_spectrogram(prep.signal.samples, prep.signal.sample_rate,
                                             pipeline_nfft(prep.signal.num_samples));
     return prep;

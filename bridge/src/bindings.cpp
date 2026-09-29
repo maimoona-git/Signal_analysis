@@ -184,10 +184,17 @@ sigapp::PipelineOptions options_from_js(const val& o) {
     sigapp::PipelineOptions options;
     if (!present(o)) return options;
     if (o.typeOf().as<std::string>() != "object") throw std::invalid_argument("pipeline options must be an object");
-    reject_unknown_keys(o, {"sampleRate", "samplesPerSymbol", "demod", "interleaver", "fecScheme", "fecMsgLen",
-                            "headerPattern", "autoDetect", "softDecoding", "recoverTiming"}, "pipeline");
+    reject_unknown_keys(o, {"sampleRate", "iqFormat", "samplesPerSymbol", "demod", "interleaver", "fecScheme",
+                            "fecMsgLen", "headerPattern", "autoDetect", "softDecoding", "recoverTiming"}, "pipeline");
 
     if (present(o["sampleRate"])) options.sample_rate = number_option(o["sampleRate"], "sampleRate");
+    if (present(o["iqFormat"])) {
+        const std::string fmt = string_option(o["iqFormat"], "iqFormat");
+        if (fmt == "cf32") options.iq_format = sigcore::IqSampleFormat::Cf32;
+        else if (fmt == "ci16") options.iq_format = sigcore::IqSampleFormat::Ci16;
+        else if (fmt == "cu8") options.iq_format = sigcore::IqSampleFormat::Cu8;
+        else throw std::invalid_argument("option iqFormat must be 'cf32', 'ci16' or 'cu8'");
+    }
     if (present(o["samplesPerSymbol"])) options.samples_per_symbol = uint_option(o["samplesPerSymbol"], "samplesPerSymbol");
     if (present(o["fecScheme"])) options.fec_scheme = string_option(o["fecScheme"], "fecScheme");
     if (present(o["fecMsgLen"])) options.fec_msg_len = uint_option(o["fecMsgLen"], "fecMsgLen");

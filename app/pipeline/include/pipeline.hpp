@@ -52,6 +52,10 @@ unsigned int pipeline_nfft(size_t num_samples);
 // only if given; with `auto_detect` and neither given, detect_params picks them.
 struct PipelineOptions {
     std::optional<double> sample_rate;        // required-in-spirit for raw .IQ (default 1 MHz)
+    // How a raw .IQ/.sigmf-data file's samples are stored on disk -- ignored for .wav,
+    // which carries its own PCM format in its header. See sigcore::IqSampleFormat's own
+    // comment for what each one is and which real captures actually use it.
+    sigcore::IqSampleFormat iq_format = sigcore::IqSampleFormat::Cf32;
     unsigned int samples_per_symbol = 1;      // >1: naive decimation for linear schemes (not FSK)
     DemodParams demod;                        // FSK parameters
     std::optional<InterleaverSpec> interleaver;

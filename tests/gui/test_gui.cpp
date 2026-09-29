@@ -812,6 +812,30 @@ TEST_CASE("main window: the recover-timing toggle is sent to the backend") {
     CHECK(backend.requests.back().options.recover_timing);
 }
 
+TEST_CASE("main window: the IQ format combo box is sent to the backend") {
+    StubBackend backend;
+    MainWindow win(&backend);
+    win.loadFile("bpsk_ldpc_block.iq", demo_bytes("bpsk_ldpc_block.iq"));
+    win.sampleRateEdit()->setText("8000");
+    CHECK(win.iqFormatComboBox()->currentData().toString() == "cf32");  // default: this project's own convention
+
+    win.runAnalysis();
+    pump();
+    CHECK(backend.requests.back().options.iq_format == sigcore::IqSampleFormat::Cf32);
+
+    win.iqFormatComboBox()->setCurrentIndex(1);
+    CHECK(win.iqFormatComboBox()->currentData().toString() == "ci16");
+    win.runAnalysis();
+    pump();
+    CHECK(backend.requests.back().options.iq_format == sigcore::IqSampleFormat::Ci16);
+
+    win.iqFormatComboBox()->setCurrentIndex(2);
+    CHECK(win.iqFormatComboBox()->currentData().toString() == "cu8");
+    win.runAnalysis();
+    pump();
+    CHECK(backend.requests.back().options.iq_format == sigcore::IqSampleFormat::Cu8);
+}
+
 TEST_CASE("main window: the square-signal toggle changes the waterfall, reversibly") {
     StubBackend backend;
     MainWindow win(&backend);

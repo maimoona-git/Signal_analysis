@@ -100,8 +100,16 @@ export class SigBridge {
    * demod -> de-interleave -> FEC decode -> correlate. Options mirror the native
    * app's run_pipeline (unknown options are rejected, so typos are caught):
    *
-   *   filename          decides the format by extension (.wav / .iq), as the native app does
-   *   sampleRate        raw .IQ only (default 1 MHz); WAV carries its own
+   *   filename          decides the format by extension (.wav / .iq / .sigmf-data), as the
+   *                     native app does -- a SigMF .sigmf-data file needs no renaming, since
+   *                     (for the default cf32 case) its bytes already are a raw .iq file
+   *   sampleRate        raw .IQ/.sigmf-data only (default 1 MHz); WAV carries its own
+   *   iqFormat          'cf32' (default) | 'ci16' | 'cu8': how raw .IQ/.sigmf-data samples are
+   *                     stored on disk -- cf32 is this project's own convention and needs no
+   *                     conversion; ci16 (full-scale +-32768, e.g. USRP) and cu8 (unsigned,
+   *                     centred on 127.5, e.g. RTL-SDR) are real formats real SDR hardware
+   *                     actually produces, converted to the same float samples either way.
+   *                     Ignored for WAV, which carries its own PCM format in its header.
    *   samplesPerSymbol  decimation for linear schemes (not FSK), default 1
    *   demod             { bitsPerSymbol, samplesPerSymbol, bandwidth }, FSK only
    *   interleaver       { kind: 'block'|'diagonal'|'pseudo_random'|'convolutional',

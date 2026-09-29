@@ -231,7 +231,7 @@ describe('the Qt-WASM app in real Chrome', () => {
     let s = await waitFor('the file to load', (x) => x.filename === 'mystery.bin');
     await click(s.controls.run);
     s = await waitFor('the failure', (x) => x.status === 'Analysis failed.');
-    assert.equal(s.resultText, "Error: unsupported file extension: '.bin' (expected .wav or .iq)");
+    assert.equal(s.resultText, "Error: unsupported file extension: '.bin' (expected .wav, .iq or .sigmf-data)");
     assert.equal(s.dialogOpen, true);
     assert.equal(s.canRun, true);          // and the user can carry on
     await shot('5-error');

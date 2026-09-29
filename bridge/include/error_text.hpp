@@ -42,10 +42,15 @@ inline std::string describe_exception(const std::exception& e) {
                "only recognises the modulation schemes it was trained on). Try a capture made for "
                "this pipeline instead.";
     }
-    if (detail::contains(what, "not aligned to complex64 sample size")) {
-        return "This .IQ file's size isn't a whole number of I/Q sample pairs, so it can't be a raw "
-               "complex64 capture. Check that it's actually raw I/Q data, not a compressed or "
-               "otherwise different file format.";
+    // Matches all three of iq_io.cpp's own "not aligned to <format> sample size" messages
+    // (complex64 / complex-int16 / complex-uint8 -- see IqSampleFormat's own comment),
+    // not just the cf32 one: whichever format was selected, a misaligned file means the
+    // same thing to a user, so one rewritten message covers all of them.
+    if (detail::contains(what, "not aligned to") && detail::contains(what, "sample size")) {
+        return "This .IQ file's size isn't a whole number of I/Q sample pairs for the selected sample "
+               "format. Check that it's actually raw I/Q data in that format, not a compressed or "
+               "otherwise different file format -- or try a different IQ format if you are not sure "
+               "which one this file uses.";
     }
     if (detail::contains(what, "data size not aligned to frame size")) {
         return "This WAV file's audio data isn't a whole number of sample frames, so it may be "

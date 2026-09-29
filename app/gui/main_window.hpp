@@ -2,12 +2,15 @@
 
 #include <QAction>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDockWidget>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QShowEvent>
+#include <QSlider>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -80,8 +83,25 @@ public:
     QCheckBox* autoDetectCheckBox() const { return auto_detect_; }
     // Feature 3 (SIH26147 extra feature): the Hard/Soft decode toggle.
     QCheckBox* softDecodingCheckBox() const { return soft_decoding_; }
+    // Real-world signal support: matched-filter timing recovery + carrier tracking.
+    QCheckBox* recoverTimingCheckBox() const { return recover_timing_; }
+    // Squares the capture before computing the waterfall (not the demodulated bits --
+    // display only): collapses an M-fold symmetric modulation down to reveal an
+    // otherwise-invisible carrier tone, the same M=2 trick recover_linear's own coarse
+    // carrier-offset estimate uses internally (core/include/recover.hpp) -- this lets
+    // a user see why/whether that estimate should find anything, not just trust it did.
+    QCheckBox* squareSignalCheckBox() const { return square_signal_; }
+    // The waterfall's colour-range controls: two sliders (dB), a live-value label, and
+    // a button back to full auto-range. Disabled (and reset to auto) whenever the
+    // waterfall has no data.
+    QSlider* colorRangeMinSlider() const { return color_min_slider_; }
+    QSlider* colorRangeMaxSlider() const { return color_max_slider_; }
+    QPushButton* colorRangeAutoButton() const { return color_range_auto_button_; }
     QLineEdit* sampleRateEdit() const { return sample_rate_; }
     QSpinBox* samplesPerSymbolSpinBox() const { return samples_per_symbol_; }
+    // Real-world signal support: how a raw .IQ/.sigmf-data file's samples are stored on
+    // disk ("cf32", "ci16" or "cu8" -- see QComboBox::currentData()).
+    QComboBox* iqFormatComboBox() const { return iq_format_; }
     QString loadedFilename() const { return filename_; }
     bool analysisRunning() const { return running_; }
 
@@ -104,6 +124,14 @@ private:
     void failAnalysis(const QString& message);
     void runParamSearch();
     void showParamSearchCandidate(int row);
+    // Recomputes the waterfall from last_result_ -- squared or not, per
+    // squareSignalCheckBox() -- then resets the colour-range controls to match (a
+    // fresh WaterfallWidget::setData() always reverts to auto-range; see its comment).
+    void applySquareSignal();
+    // Syncs the colour-range sliders/label to the waterfall's current data (auto
+    // range), and enables/disables them with whether it has data at all.
+    void resetColorRangeControls();
+    void updateColorRangeFromSliders();
 
     AnalysisBackend* backend_;
     std::function<void()> file_picker_;
@@ -129,8 +157,15 @@ private:
     QAction* run_action_ = nullptr;
     QCheckBox* auto_detect_ = nullptr;
     QCheckBox* soft_decoding_ = nullptr;
+    QCheckBox* recover_timing_ = nullptr;
+    QCheckBox* square_signal_ = nullptr;
+    QSlider* color_min_slider_ = nullptr;
+    QSlider* color_max_slider_ = nullptr;
+    QLabel* color_range_label_ = nullptr;
+    QPushButton* color_range_auto_button_ = nullptr;
     QLineEdit* sample_rate_ = nullptr;
     QSpinBox* samples_per_symbol_ = nullptr;
+    QComboBox* iq_format_ = nullptr;
 
     QString filename_;
     QByteArray bytes_;

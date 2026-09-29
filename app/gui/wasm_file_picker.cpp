@@ -7,7 +7,7 @@ namespace sigui {
 EM_JS(void, sig_pick_file_js, (), {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.wav,.iq,.IQ';
+    input.accept = '.wav,.iq,.IQ,.sigmf-data';
     input.style.display = 'none';
     input.addEventListener('change', async () => {
         const file = input.files && input.files[0];

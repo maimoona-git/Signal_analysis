@@ -3,6 +3,7 @@
 #include <QDoubleValidator>
 #include <QFileDialog>
 #include <QFontDatabase>
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QMenu>
@@ -14,6 +15,9 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 
+#include <cmath>
+#include <optional>
+
 #include "correlate.hpp"
 #include "error_text.hpp"
 #include "result_text.hpp"
@@ -22,7 +26,7 @@ namespace sigui {
 
 MainWindow::MainWindow(AnalysisBackend* backend, QWidget* parent) : QMainWindow(parent), backend_(backend) {
     setWindowTitle(QStringLiteral("Deconflicted - Signal Analysis Tool"));
-    resize(1100, 700);
+    resize(1300, 700);
     setDockNestingEnabled(true);
     buildUi();
     buildToolbar();
@@ -104,11 +108,53 @@ void MainWindow::buildUi() {
     search_layout->addWidget(param_search_text_);
     feature_tabs_->addTab(search_page, QStringLiteral("Parameter Search"));
 
+    // The waterfall's own colour-range controls (two dB sliders, a live-value label,
+    // and a button back to auto-range) sit in a thin strip above the plot itself, so
+    // they travel with it if the panel is dragged out or floated.
+    auto* waterfall_container = new QWidget;
+    auto* waterfall_layout = new QVBoxLayout(waterfall_container);
+    waterfall_layout->setContentsMargins(0, 0, 0, 0);
+    waterfall_layout->setSpacing(2);
+
+    auto* range_row = new QWidget;
+    auto* range_layout = new QHBoxLayout(range_row);
+    range_layout->setContentsMargins(4, 2, 4, 2);
+    // A short caption, not the original "Colour range (dB):" -- a fixed-text label
+    // can't shrink the way the sliders can, and that longer wording was measurably
+    // pushing this dock past its intended ~2:1 share of a freely user-resizable window
+    // (see MainWindow's own class comment); this one is short enough not to repeat
+    // that. The full wording is still in the tooltip for anyone who wants it spelled out.
+    auto* range_caption = new QLabel(QStringLiteral("dB:"));
+    range_caption->setToolTip(QStringLiteral("Colour range (dB): drag to change contrast, Auto to reset"));
+    range_row->setToolTip(range_caption->toolTip());
+    range_layout->addWidget(range_caption);
+    color_min_slider_ = new QSlider(Qt::Horizontal);
+    color_max_slider_ = new QSlider(Qt::Horizontal);
+    color_min_slider_->setMinimumWidth(30);
+    color_max_slider_->setMinimumWidth(30);
+    color_range_label_ = new QLabel;
+    color_range_label_->setMinimumWidth(0);
+    color_range_auto_button_ = new QPushButton(QStringLiteral("Auto"));
+    connect(color_min_slider_, &QSlider::valueChanged, this, [this] { updateColorRangeFromSliders(); });
+    connect(color_max_slider_, &QSlider::valueChanged, this, [this] { updateColorRangeFromSliders(); });
+    connect(color_range_auto_button_, &QPushButton::clicked, this, [this] {
+        if (waterfall_->hasData()) waterfall_->setColorRange(std::nullopt, std::nullopt);
+        resetColorRangeControls();
+    });
+    range_layout->addWidget(color_min_slider_, /*stretch=*/1);
+    range_layout->addWidget(color_max_slider_, /*stretch=*/1);
+    range_layout->addWidget(color_range_label_);
+    range_layout->addWidget(color_range_auto_button_);
+
+    waterfall_layout->addWidget(range_row);
+    waterfall_layout->addWidget(waterfall_, /*stretch=*/1);
+    resetColorRangeControls();  // starts with no data: sliders disabled, label blank
+
     // Default arrangement matches the old fixed layout -- waterfall above constellation
     // on the left, results and features on the right -- but every panel here can be
     // dragged to a new spot, floated into its own window, or closed (buildViewMenu()
     // adds a way to bring a closed one back).
-    waterfall_dock_ = makePanelDock(QStringLiteral("Waterfall"), waterfall_);
+    waterfall_dock_ = makePanelDock(QStringLiteral("Waterfall"), waterfall_container);
     constellation_dock_ = makePanelDock(QStringLiteral("Constellation"), constellation_);
     results_dock_ = makePanelDock(QStringLiteral("Results"), results_);
     features_dock_ = makePanelDock(QStringLiteral("Features"), feature_tabs_);
@@ -165,10 +211,6 @@ void MainWindow::buildToolbar() {
     auto_detect_ = new QCheckBox(QStringLiteral("Auto-detect FEC/Interleaving"));
     toolbar->addWidget(auto_detect_);
 
-    // Feature 3 (SIH26147 extra feature): Hard/Soft decode toggle.
-    soft_decoding_ = new QCheckBox(QStringLiteral("Soft decoding"));
-    toolbar->addWidget(soft_decoding_);
-
     toolbar->addWidget(new QLabel(QStringLiteral(" Sample rate (Hz, .IQ only): ")));
     sample_rate_ = new QLineEdit;
     sample_rate_->setPlaceholderText(QStringLiteral("default"));
@@ -176,11 +218,58 @@ void MainWindow::buildToolbar() {
     sample_rate_->setFixedWidth(90);
     toolbar->addWidget(sample_rate_);
 
+    // Real-world signal support: how a raw .IQ/.sigmf-data file's samples are stored on
+    // disk -- ignored for .wav. Cf32 (this project's own convention, and the common
+    // case for a SigMF .sigmf-data file with no conversion needed) stays the default,
+    // so every existing capture opens exactly as before unless this is changed.
+    // See sigcore::IqSampleFormat's own comment for what Ci16/Cu8 are and which real
+    // hardware actually produces them.
+    toolbar->addWidget(new QLabel(QStringLiteral(" IQ format: ")));
+    iq_format_ = new QComboBox;
+    iq_format_->addItem(QStringLiteral("cf32 (float32)"), QStringLiteral("cf32"));
+    iq_format_->addItem(QStringLiteral("ci16 (int16, e.g. USRP)"), QStringLiteral("ci16"));
+    iq_format_->addItem(QStringLiteral("cu8 (uint8, e.g. RTL-SDR)"), QStringLiteral("cu8"));
+    iq_format_->setToolTip(QStringLiteral("How a raw .IQ or .sigmf-data file's samples are stored on disk."));
+    toolbar->addWidget(iq_format_);
+
     toolbar->addWidget(new QLabel(QStringLiteral(" Samples/symbol: ")));
     samples_per_symbol_ = new QSpinBox;
     samples_per_symbol_->setRange(1, 64);
     samples_per_symbol_->setValue(1);
     toolbar->addWidget(samples_per_symbol_);
+
+    // A second row: decoding-mode toggles. Split out from the row above (rather than
+    // one long toolbar) because that row alone already matches the original app's
+    // width, and each toggle added here since has made a single row overflow a
+    // realistic browser window -- clipping "Sample rate"/"Samples/symbol" off the
+    // visible edge entirely, found from a real (repeated) browser-test failure, not
+    // guessed at.
+    addToolBarBreak();
+    QToolBar* mode_toolbar = addToolBar(QStringLiteral("Decoding mode"));
+
+    // Feature 3 (SIH26147 extra feature): Hard/Soft decode toggle.
+    soft_decoding_ = new QCheckBox(QStringLiteral("Soft decoding"));
+    mode_toolbar->addWidget(soft_decoding_);
+
+    // Real-world signal support: matched-filter timing recovery + carrier tracking,
+    // for a linear scheme with a real (unknown) timing offset and carrier error --
+    // off by default since it changes what gets decoded (see PipelineOptions::
+    // recover_timing's own comment) and is only useful for samples_per_symbol > 1.
+    recover_timing_ = new QCheckBox(QStringLiteral("Recover timing/carrier"));
+    recover_timing_->setToolTip(
+        QStringLiteral("For a real capture (not one built for this app): matched-filter timing "
+                       "recovery and carrier tracking instead of naive decimation."));
+    mode_toolbar->addWidget(recover_timing_);
+
+    // Squares the capture before computing the waterfall -- display only, does not touch
+    // the demodulated bits. See squareSignalCheckBox()'s own comment.
+    square_signal_ = new QCheckBox(QStringLiteral("Square signal"));
+    square_signal_->setToolTip(
+        QStringLiteral("Waterfall only: squares the capture, which collapses an M-fold symmetric "
+                       "modulation down to a single tone at any residual carrier offset -- the "
+                       "same trick the real-world recovery above uses to find one."));
+    connect(square_signal_, &QCheckBox::toggled, this, [this] { applySquareSignal(); });
+    mode_toolbar->addWidget(square_signal_);
 }
 
 void MainWindow::openFile() {
@@ -189,7 +278,8 @@ void MainWindow::openFile() {
         return;
     }
     QPointer<MainWindow> self(this);
-    QFileDialog::getOpenFileContent(QStringLiteral("Signal captures (*.wav *.iq *.IQ);;All files (*)"),
+    QFileDialog::getOpenFileContent(
+        QStringLiteral("Signal captures (*.wav *.iq *.IQ *.sigmf-data);;All files (*)"),
                                     [self](const QString& name, const QByteArray& content) {
                                         if (self && !name.isEmpty()) self->loadFile(name, content);  // cancelled: empty name
                                     });
@@ -204,6 +294,7 @@ void MainWindow::loadFile(const QString& filename, const QByteArray& bytes) {
     statusBar()->showMessage(QStringLiteral("Loaded %1. Click 'Run Analysis' to proceed.").arg(filename));
     results_->clearText();
     waterfall_->clearData();
+    resetColorRangeControls();
     constellation_->clearData();
     frame_raster_->clearData();
     frame_raster_text_->clear();
@@ -229,9 +320,14 @@ void MainWindow::runAnalysis() {
         const double rate = QLocale().toDouble(rate_text, &ok);
         if (ok) request.options.sample_rate = rate;
     }
+    const QString iq_format = iq_format_->currentData().toString();
+    if (iq_format == QStringLiteral("ci16")) request.options.iq_format = sigcore::IqSampleFormat::Ci16;
+    else if (iq_format == QStringLiteral("cu8")) request.options.iq_format = sigcore::IqSampleFormat::Cu8;
+    else request.options.iq_format = sigcore::IqSampleFormat::Cf32;
     request.options.samples_per_symbol = static_cast<unsigned>(samples_per_symbol_->value());
     request.options.auto_detect = auto_detect_->isChecked();
     request.options.soft_decoding = soft_decoding_->isChecked();
+    request.options.recover_timing = recover_timing_->isChecked();
 
     statusBar()->showMessage(QStringLiteral("Running analysis..."));
     running_ = true;
@@ -264,19 +360,66 @@ void MainWindow::finishAnalysis(quint64 run_id, bool ok, std::shared_ptr<const s
         failAnalysis(error);
         return;
     }
-    waterfall_->setData(result->spectrogram);
+    last_result_ = result;
+    applySquareSignal();  // sets the waterfall from result->spectrogram (or its squared version) and resets the range controls
     constellation_->setData(result->samples);
     results_->showResult(*result);
     frame_raster_->setData(result->raster);
     frame_raster_text_->setPlainText(QString::fromStdString(sigapp::format_raster_text(result->raster)));
     rank_analysis_->setData(result->rank_analysis);
     rank_analysis_text_->setPlainText(QString::fromStdString(sigapp::format_rank_analysis_text(result->rank_analysis)));
-    last_result_ = result;
     param_search_result_ = sigapp::ParamSearchResult{};
     param_search_table_->setRowCount(0);
     param_search_text_->clear();
     search_params_button_->setEnabled(true);
     statusBar()->showMessage(QString::fromStdString(sigapp::format_done_status(*result)));
+}
+
+void MainWindow::applySquareSignal() {
+    if (!last_result_) return;
+    if (square_signal_->isChecked()) {
+        std::vector<std::complex<float>> squared(last_result_->samples.size());
+        for (size_t i = 0; i < squared.size(); ++i) squared[i] = last_result_->samples[i] * last_result_->samples[i];
+        // Same nfft as the original spectrogram (generate_spectrogram's default hop),
+        // so the squared view is at the same time/frequency resolution, not a
+        // surprising change alongside the surprising content.
+        const auto spectrogram =
+            sigapp::generate_spectrogram(squared, last_result_->sample_rate, last_result_->spectrogram.nfft);
+        waterfall_->setData(spectrogram);
+    } else {
+        waterfall_->setData(last_result_->spectrogram);
+    }
+    resetColorRangeControls();  // setData() always reverts to auto-range; keep the UI in sync
+}
+
+void MainWindow::resetColorRangeControls() {
+    const bool has_data = waterfall_->hasData();
+    color_min_slider_->setEnabled(has_data);
+    color_max_slider_->setEnabled(has_data);
+    color_range_auto_button_->setEnabled(has_data);
+    if (!has_data) {
+        color_range_label_->setText(QStringLiteral("no data"));
+        return;
+    }
+    // Sliders are whole dB; dataMin_/dataMax_ padded outward so both ends stay reachable
+    // (a slider's own value can't land strictly beyond its range).
+    const int lo = static_cast<int>(std::floor(waterfall_->dataMin())) - 1;
+    const int hi = static_cast<int>(std::ceil(waterfall_->dataMax())) + 1;
+    const QSignalBlocker block_min(color_min_slider_), block_max(color_max_slider_);
+    color_min_slider_->setRange(lo, hi);
+    color_max_slider_->setRange(lo, hi);
+    color_min_slider_->setValue(lo);
+    color_max_slider_->setValue(hi);
+    color_range_label_->setText(QStringLiteral("%1 .. %2 dB (auto)").arg(lo).arg(hi));
+}
+
+void MainWindow::updateColorRangeFromSliders() {
+    if (!waterfall_->hasData()) return;
+    const int lo = color_min_slider_->value();
+    const int hi = color_max_slider_->value();
+    if (lo >= hi) return;  // dragging through each other mid-gesture; WaterfallWidget rejects this anyway
+    waterfall_->setColorRange(static_cast<double>(lo), static_cast<double>(hi));
+    color_range_label_->setText(QStringLiteral("%1 .. %2 dB").arg(lo).arg(hi));
 }
 
 void MainWindow::runParamSearch() {

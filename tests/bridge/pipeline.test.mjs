@@ -349,6 +349,60 @@ describe('Real-world signal support (recoverTiming) through the bridge', () => {
   });
 });
 
+describe('Real-world signal support (raw IQ formats and .sigmf-data) through the bridge', () => {
+  let bridge;
+  before(async () => {
+    bridge = await SigBridge.create(factory);
+    bridge.setClassifier(() => ({ classes: ['bpsk'], probabilities: [1] }));
+  });
+  after(() => bridge.clearClassifier());
+
+  // The full pipeline's own ML preprocessing needs at least 64 samples regardless of
+  // IQ format -- nothing to do with this feature -- so every file below pads out to
+  // that with harmless trailing zero samples, and only checks the leading, meaningful
+  // ones it actually cares about.
+  const kMinSamples = 64;
+
+  it("reads ci16 (SigMF's own full-scale +-32768 convention)", async () => {
+    const i16 = new Int16Array(kMinSamples * 2);
+    i16.set([16384, -16384, 32767, -32768]);  // two meaningful complex samples, then zero padding
+    const r = await bridge.runPipeline(new File([i16.buffer], 'raw.iq'), { sampleRate: 8000, iqFormat: 'ci16' });
+    assert.equal(r.fileFormat, 'iq_ci16');
+    assert.equal(r.numSamples, kMinSamples);
+    const [i0, q0, i1, q1] = r.samples;
+    assert.ok(Math.abs(i0 - 0.5) < 1e-6 && Math.abs(q0 - -0.5) < 1e-6);
+    assert.ok(Math.abs(i1 - 32767 / 32768) < 1e-6);  // just under +1, not at it
+    assert.equal(q1, -1);                            // exactly -1 at full negative scale
+  });
+
+  it("reads cu8 (RTL-SDR's own convention, centred on 127.5, not 0)", async () => {
+    const u8 = new Uint8Array(kMinSamples * 2).fill(128);  // 128: dead centre, not 0 -- see the format's own comment
+    u8.set([255, 0, 0, 255, 128, 127]);  // three meaningful complex samples, then centred padding
+    const r = await bridge.runPipeline(new File([u8.buffer], 'raw.iq'), { sampleRate: 8000, iqFormat: 'cu8' });
+    assert.equal(r.fileFormat, 'iq_cu8');
+    assert.equal(r.numSamples, kMinSamples);
+    const [i0, q0, i1, q1, i2, q2] = r.samples;
+    assert.ok(Math.abs(i0 - 1) < 1e-3 && Math.abs(q0 - -1) < 1e-3);
+    assert.ok(Math.abs(i1 - -1) < 1e-3 && Math.abs(q1 - 1) < 1e-3);
+    assert.ok(Math.abs(i2 - 0.5 / 127.5) < 1e-3 && Math.abs(q2 - -0.5 / 127.5) < 1e-3);
+  });
+
+  it('accepts a .sigmf-data file with no renaming (cf32, the default iqFormat)', async () => {
+    const f32 = new Float32Array(kMinSamples * 2);
+    f32.set([1, 0, 0, 1]);  // one meaningful complex sample pair, then zero padding
+    const r = await bridge.runPipeline(new File([f32.buffer], 'capture.sigmf-data'), { sampleRate: 8000 });
+    assert.equal(r.fileFormat, 'iq_cf32');
+    assert.equal(r.numSamples, kMinSamples);
+  });
+
+  it('rejects an unknown iqFormat', async () => {
+    const f32 = new Float32Array([1, 0]);
+    await assert.rejects(
+      bridge.runPipeline(new File([f32.buffer], 'x.iq'), { sampleRate: 8000, iqFormat: 'ci32' }),
+      /iqFormat must be 'cf32', 'ci16' or 'cu8'/);
+  });
+});
+
 describe('runPipeline option validation and failure modes', () => {
   let bridge;
   const iq = () => new File([fileBytes('mod_bpsk.iq')], 'mod_bpsk.iq');

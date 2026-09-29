@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -143,7 +144,26 @@ TEST_CASE("load_signal: format by extension, rates, and errors, like io.py") {
     CHECK_THROWS(load_signal(p, 15, "x.iq"));                                           // misaligned
     std::string msg;
     try { load_signal(p, 16, "x.bin"); } catch (const std::exception& e) { msg = e.what(); }
-    CHECK(msg == "unsupported file extension: '.bin' (expected .wav or .iq)");
+    CHECK(msg == "unsupported file extension: '.bin' (expected .wav, .iq or .sigmf-data)");
+
+    // .sigmf-data: no rename needed -- SigMF's own raw-data file, read exactly like
+    // .iq (see load_signal's own comment on why that is exactly right for the default,
+    // most common Cf32 case, without needing to parse the .sigmf-meta sidecar at all).
+    CHECK(load_signal(p, 16, "capture.sigmf-data", 4000.0).sample_rate == 4000.0);
+    CHECK(load_signal(p, 16, "capture.sigmf-data").num_samples == 2);
+
+    // iq_format threads through for both extensions, defaulting to Cf32 (so every
+    // existing call above, none of which pass it, is completely unaffected).
+    const std::vector<int16_t> ci16 = {16384, -16384};
+    const auto* pi16 = reinterpret_cast<const uint8_t*>(ci16.data());
+    const auto ci16_sig = load_signal(pi16, 4, "x.iq", 8000.0, sigcore::IqSampleFormat::Ci16);
+    CHECK(ci16_sig.num_samples == 1 && ci16_sig.format == "iq_ci16");
+    CHECK_NEAR(ci16_sig.samples[0].real(), 0.5, 1e-6);
+
+    const std::vector<uint8_t> cu8 = {255, 0};
+    const auto cu8_sig = load_signal(cu8.data(), 2, "x.sigmf-data", 8000.0, sigcore::IqSampleFormat::Cu8);
+    CHECK(cu8_sig.num_samples == 1 && cu8_sig.format == "iq_cu8");
+    CHECK_NEAR(cu8_sig.samples[0].real(), 1.0, 1e-3);
 }
 
 // The native app's own dispatcher tests (test_fec_dispatcher.py, test_interleave_dispatcher.py).

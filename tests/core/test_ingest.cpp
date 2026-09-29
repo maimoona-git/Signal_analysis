@@ -72,6 +72,8 @@ Bytes float32(const std::vector<float>& v) {
     return b;
 }
 
+Bytes cu8(const std::vector<uint8_t>& v) { return Bytes(v.begin(), v.end()); }
+
 Bytes mono16_wav(const std::vector<int16_t>& s, uint32_t rate = 8000) {
     const Bytes p = pcm16(s);
     return riff({fmt_chunk(1, 1, rate, 16), data_chunk(p, static_cast<uint32_t>(p.size()))});
@@ -208,6 +210,32 @@ TEST_CASE("parse_iq: rejects bad sample rate and misaligned size; empty is zero 
     CHECK_THROWS(parse_iq(p.data(), p.size(), -1.0, "t"));
     CHECK_THROWS(parse_iq(p.data(), p.size() - 1, 8000.0, "t"));
     CHECK(parse_iq(p.data(), 0, 8000.0, "t").num_samples() == 0);
+}
+
+TEST_CASE("parse_iq: ci16 (SigMF's own full-scale +-32768 convention)") {
+    const Bytes p = pcm16({16384, -16384, 32767, -32768});  // two complex samples
+    const auto sig = parse_iq(p.data(), p.size(), 8000.0, "t.iq", IqSampleFormat::Ci16);
+    CHECK(sig.num_samples() == 2);
+    CHECK(sig.format == "iq_ci16");
+    CHECK_NEAR(sig.samples[0].real(), 0.5, 1e-6);
+    CHECK_NEAR(sig.samples[0].imag(), -0.5, 1e-6);
+    CHECK_NEAR(sig.samples[1].real(), 32767.0 / 32768.0, 1e-6);  // just under +1, not at it
+    CHECK_NEAR(sig.samples[1].imag(), -1.0, 1e-6);               // exactly -1 at full negative scale
+    CHECK_THROWS(parse_iq(p.data(), p.size() - 1, 8000.0, "t", IqSampleFormat::Ci16));  // misaligned
+}
+
+TEST_CASE("parse_iq: cu8 (RTL-SDR's own convention, centred on 127.5, not 0)") {
+    const Bytes p = cu8({255, 0, 0, 255, 128, 127});  // three complex samples
+    const auto sig = parse_iq(p.data(), p.size(), 8000.0, "t.iq", IqSampleFormat::Cu8);
+    CHECK(sig.num_samples() == 3);
+    CHECK(sig.format == "iq_cu8");
+    CHECK_NEAR(sig.samples[0].real(), 1.0, 1e-3);     // 255: full positive scale
+    CHECK_NEAR(sig.samples[0].imag(), -1.0, 1e-3);    // 0: full negative scale
+    CHECK_NEAR(sig.samples[1].real(), -1.0, 1e-3);
+    CHECK_NEAR(sig.samples[1].imag(), 1.0, 1e-3);
+    CHECK_NEAR(sig.samples[2].real(), 0.5 / 127.5, 1e-3);   // 128: just above the centre
+    CHECK_NEAR(sig.samples[2].imag(), -0.5 / 127.5, 1e-3);  // 127: just below the centre
+    CHECK_THROWS(parse_iq(p.data(), p.size() - 1, 8000.0, "t", IqSampleFormat::Cu8));  // misaligned
 }
 
 TEST_CASE("ingest_bytes: routes by content first, then by extension") {

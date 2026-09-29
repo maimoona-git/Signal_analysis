@@ -27,17 +27,18 @@ std::string path_suffix(const std::string& path) {
 }  // namespace
 
 LoadedSignal load_signal(const uint8_t* data, size_t size, const std::string& filename,
-                         std::optional<double> sample_rate) {
+                         std::optional<double> sample_rate, sigcore::IqSampleFormat iq_format) {
     const std::string suffix = path_suffix(filename);
 
     sigcore::SignalData raw;
     if (suffix == ".wav") {
         raw = sigcore::parse_wav(data, size, filename);
-    } else if (suffix == ".iq") {
+    } else if (suffix == ".iq" || suffix == ".sigmf-data") {
         const double rate = (sample_rate.has_value() && *sample_rate != 0.0) ? *sample_rate : kDefaultIqSampleRate;
-        raw = sigcore::parse_iq(data, size, rate, filename);
+        raw = sigcore::parse_iq(data, size, rate, filename, iq_format);
     } else {
-        throw std::invalid_argument("unsupported file extension: '" + suffix + "' (expected .wav or .iq)");
+        throw std::invalid_argument("unsupported file extension: '" + suffix +
+                                    "' (expected .wav, .iq or .sigmf-data)");
     }
 
     LoadedSignal out;

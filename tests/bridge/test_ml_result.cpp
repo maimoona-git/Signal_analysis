@@ -74,6 +74,16 @@ TEST_CASE("describe_exception explains a misclassified real-world capture in pla
     CHECK(iq.find("x.iq") == std::string::npos);      // the raw message (with the bare filename) is gone
     CHECK(iq.find(".IQ file") != std::string::npos);  // still says which file type, in plain terms
 
+    // The same rewrite covers all three IqSampleFormat variants of this message, not
+    // just cf32 -- a user picking the wrong format from the new dropdown should get the
+    // same plain-language explanation, whichever format they picked.
+    for (const char* raw : {"iq: file size not aligned to complex-int16 sample size: x.iq",
+                            "iq: file size not aligned to complex-uint8 sample size: x.iq"}) {
+        const std::string msg = sigbridge::describe_exception(std::runtime_error(raw));
+        CHECK(msg.find("x.iq") == std::string::npos);
+        CHECK(msg.find(".IQ file") != std::string::npos);
+    }
+
     const std::string wav = sigbridge::describe_exception(
         std::runtime_error("wav: data size not aligned to frame size: x.wav"));
     CHECK(wav.find("WAV file") != std::string::npos);
