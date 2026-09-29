@@ -30,8 +30,6 @@ const features = [
     text: "Both plots zoom with the wheel and pan by dragging, so a short burst can be inspected up close.",
   },
 ];
-
-const stack = ["C++ and liquid-dsp", "Qt for WebAssembly", "ONNX Runtime Web", "Embind", "Emscripten"];
 ---
 
 <LandingLayout
@@ -116,18 +114,6 @@ const stack = ["C++ and liquid-dsp", "Qt for WebAssembly", "ONNX Runtime Web", "
           ))
         }
       </ul>
-    </div>
-  </section>
-
-  <section class="section section--tight" id="stack">
-    <div class="inner split">
-      <h2 data-reveal>Built with</h2>
-      <div class="prose" data-reveal style="transition-delay: 90ms">
-        <ul class="stack">
-          {stack.map((item) => <li>{item}</li>)}
-        </ul>
-        <p>There is no Python at runtime. It only exists in the repo as offline training tooling.</p>
-      </div>
     </div>
   </section>
 
@@ -366,23 +352,6 @@ const stack = ["C++ and liquid-dsp", "Qt for WebAssembly", "ONNX Runtime Web", "
 
   .features__item p {
     max-width: 30rem;
-  }
-
-  .stack {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-  }
-
-  .stack li {
-    padding: 0.4rem 0.9rem;
-    border: 1px solid var(--black);
-    border-radius: 999px;
-    color: var(--black);
-    font-size: 0.9375rem;
   }
 
   .cta {
