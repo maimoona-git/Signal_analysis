@@ -130,6 +130,12 @@ export class SigBridge {
    *                     result.recoveryPhaseAmbiguity carries the count of equally-valid constant
    *                     phase rotations the decode could be off by (e.g. 2 for BPSK means the
    *                     message may come out with every bit flipped) -- see core/include/recover.hpp.
+   *   pulseShape        'rrc' (default) | 'rect': which transmit pulse shape recoverTiming should
+   *                     assume (ignored unless recoverTiming is true). 'rrc' is the right choice
+   *                     for a real transmitter that pulse-shapes its output; 'rect' assumes no
+   *                     shaping at all (simple NRZ/on-off pulses) and is NOT interchangeable with
+   *                     'rrc' -- using the wrong one measurably hurts the lock, not just leaves it
+   *                     unimproved. See core/include/recover.hpp's own comment on PulseShape.
    *
    * Resolves to the result object documented in bridge/README.md.
    */

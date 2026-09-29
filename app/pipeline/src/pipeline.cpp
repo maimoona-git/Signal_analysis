@@ -63,8 +63,8 @@ PipelineResult pipeline_finish(PipelinePrep prep, const Classification& classifi
     const std::vector<std::complex<float>>* samples_for_demod = &prep.signal.samples;
     if (scheme != "fsk" && options.samples_per_symbol > 1) {
         if (options.recover_timing) {
-            const auto recovered =
-                sigcore::recover_linear(prep.signal.samples, options.samples_per_symbol, linear_scheme_from_name(scheme));
+            const auto recovered = sigcore::recover_linear(prep.signal.samples, options.samples_per_symbol,
+                                                            linear_scheme_from_name(scheme), options.pulse_shape);
             processed = recovered.samples;
             result.recovery_used = true;
             result.recovery_phase_ambiguity = recovered.phase_ambiguity_count;

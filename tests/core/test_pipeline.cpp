@@ -200,6 +200,32 @@ std::vector<std::complex<float>> make_impaired_iq(const std::vector<std::complex
     return impaired;
 }
 
+// Zero-order-hold (rectangular, unshaped) pulses instead of make_impaired_iq's RRC
+// shaping -- see recover.hpp's PulseShape comment for why this is its own, separate
+// real-world case, not just a variant of the RRC one.
+std::vector<std::complex<float>> make_rect_impaired_iq(const std::vector<std::complex<float>>& symbols,
+                                                        unsigned int sps, float cfo, float noise_amp,
+                                                        unsigned int start_offset, uint64_t noise_seed) {
+    std::vector<std::complex<float>> held(symbols.size() * sps);
+    for (size_t i = 0; i < symbols.size(); ++i)
+        for (unsigned int k = 0; k < sps; ++k) held[i * sps + k] = symbols[i];
+
+    std::vector<std::complex<float>> impaired;
+    impaired.reserve(held.size() - start_offset);
+    uint64_t rng = noise_seed;
+    auto next_noise = [&]() {
+        rng = rng * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<float>((rng >> 40) & 0xFFFFFF) / static_cast<float>(0xFFFFFF) - 0.5f;
+    };
+    for (size_t i = start_offset; i < held.size(); ++i) {
+        const float phase = -2.0f * static_cast<float>(M_PI) * cfo * static_cast<float>(i - start_offset);
+        std::complex<float> sample = held[i] * std::complex<float>(std::cos(phase), std::sin(phase));
+        sample += std::complex<float>(next_noise(), next_noise()) * noise_amp;
+        impaired.push_back(sample);
+    }
+    return impaired;
+}
+
 std::vector<uint8_t> iq_bytes(const std::vector<std::complex<float>>& samples) {
     std::vector<uint8_t> out(samples.size() * 2 * sizeof(float));
     std::memcpy(out.data(), samples.data(), out.size());
@@ -261,6 +287,60 @@ TEST_CASE("recover_timing decodes a real-world-impaired capture end to end; naiv
         const auto got = bits_to_text(decode_candidate(recovered.demodulated_bits, best));
         CHECK(message.rfind(got, 0) == 0);       // got is a genuine, uncorrupted prefix of message
         CHECK(got.size() >= message.size() - 2);  // losing at most the last couple of characters
+    }
+}
+
+TEST_CASE("pulse_shape=Rect decodes a real-world unshaped capture end to end; Rrc (the default) cannot") {
+    // Same end-to-end shape as the recover_timing test above, but for the other real-
+    // world case PulseShape exists for: a transmitter that never pulse-shapes its
+    // output at all (PySDR's own bpsk_rect_20sps.sigmf-data file, in particular --
+    // see recover.hpp's PulseShape comment). recover_timing alone (Rrc, the default)
+    // is the wrong matched filter for this signal; pulse_shape=Rect is the fix.
+    //
+    // start_offset is a multiple of sps here (unlike the RRC test above, which uses
+    // an arbitrary one): integrate_and_dump has no filter, so any *partial* leading
+    // symbol is simply dropped rather than padded, which for a rate-1/2 convolutional
+    // code desyncs every trellis pair downstream of it -- recovering from that is
+    // exactly what the PS's own bitstream-correlation stage (Section v) exists for,
+    // not Parameter Search's offset scan, so it is out of scope for this test. What
+    // this test isolates is the matched-filter choice itself: given a symbol-aligned
+    // start, does the right filter decode where the wrong one cannot.
+    const std::string message = "1234567890 ABCDEFGHIJKLMNOPQRSTUVWXYZ ZYXWVUTSRQPONMLKJIHGFEDCBA 0987654321";
+    Bits payload;
+    for (unsigned char ch : message)
+        for (int b = 7; b >= 0; --b) payload.push_back((ch >> b) & 1);
+
+    const Bits coded = fec_encode(payload, "viterbi");
+    const auto symbols = sigapp::modulate(coded, "bpsk");
+    const unsigned int sps = 8;  // see test_recover.cpp's own comment on why 8, not 20
+    const auto impaired = make_rect_impaired_iq(symbols, sps, /*cfo=*/0.003f, /*noise_amp=*/0.02f,
+                                                /*start_offset=*/0, /*noise_seed=*/777);
+    const auto bytes = iq_bytes(impaired);
+
+    ParamSearchOptions search_opts;
+    search_opts.max_bit_offset = 60;
+
+    PipelineOptions rrc_opts;
+    rrc_opts.sample_rate = 8000.0;
+    rrc_opts.samples_per_symbol = sps;
+    rrc_opts.recover_timing = true;  // default pulse_shape = Rrc
+    const auto rrc_result = run_pipeline(bytes.data(), bytes.size(), "impaired.iq", rrc_opts, {"bpsk", 1.0});
+    const auto rrc_search = search_params(rrc_result.demodulated_bits, search_opts);
+    const bool rrc_ok = rrc_search.detected &&
+        bits_to_text(decode_candidate(rrc_result.demodulated_bits, rrc_search.candidates[rrc_search.best_index])) == message;
+    CHECK(!rrc_ok);  // proves this is a real gap: the wrong matched filter cannot be rescued by parameter search
+
+    PipelineOptions rect_opts = rrc_opts;
+    rect_opts.pulse_shape = sigcore::PulseShape::Rect;
+    const auto rect_result = run_pipeline(bytes.data(), bytes.size(), "impaired.iq", rect_opts, {"bpsk", 1.0});
+    CHECK(rect_result.recovery_used);
+    const auto rect_search = search_params(rect_result.demodulated_bits, search_opts);
+    CHECK(rect_search.detected);
+    if (rect_search.detected) {
+        const auto& best = rect_search.candidates[rect_search.best_index];
+        const auto got = bits_to_text(decode_candidate(rect_result.demodulated_bits, best));
+        CHECK(message.rfind(got, 0) == 0);
+        CHECK(got.size() >= message.size() - 2);
     }
 }
 

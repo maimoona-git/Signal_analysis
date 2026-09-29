@@ -812,6 +812,28 @@ TEST_CASE("main window: the recover-timing toggle is sent to the backend") {
     CHECK(backend.requests.back().options.recover_timing);
 }
 
+TEST_CASE("main window: the pulse-shape combo box is sent to the backend") {
+    StubBackend backend;
+    MainWindow win(&backend);
+    win.loadFile("bpsk_ldpc_block.iq", demo_bytes("bpsk_ldpc_block.iq"));
+    CHECK(win.pulseShapeComboBox()->currentData().toString() == "rrc");  // default, like recover_linear's own default
+    win.sampleRateEdit()->setText("8000");
+    win.samplesPerSymbolSpinBox()->setValue(4);
+    backend.force_fec_scheme = "ldpc";
+    backend.force_fec_msg_len = 64;
+    win.recoverTimingCheckBox()->setChecked(true);
+
+    win.runAnalysis();
+    pump();
+    CHECK(backend.requests.back().options.pulse_shape == sigcore::PulseShape::Rrc);
+
+    win.pulseShapeComboBox()->setCurrentIndex(1);
+    CHECK(win.pulseShapeComboBox()->currentData().toString() == "rect");
+    win.runAnalysis();
+    pump();
+    CHECK(backend.requests.back().options.pulse_shape == sigcore::PulseShape::Rect);
+}
+
 TEST_CASE("main window: the IQ format combo box is sent to the backend") {
     StubBackend backend;
     MainWindow win(&backend);

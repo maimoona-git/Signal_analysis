@@ -347,6 +347,52 @@ describe('Real-world signal support (recoverTiming) through the bridge', () => {
       bridge.runPipeline(asFile('mod_bpsk.iq'), { sampleRate: 8000, recoverTiming: 1 }),
       /recoverTiming must be a boolean/);
   });
+
+  it('accepts pulseShape and plumbs it through recoverTiming (DSP claim proved in tests/core/test_pipeline.cpp)', async () => {
+    const msgBits = [];
+    let seed = 71;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    for (let i = 0; i < 32; i++) msgBits.push(rnd() < 0.5 ? 0 : 1);
+
+    const kK = 8, kM = 8;
+    const h1 = Array.from({ length: kM }, () => new Array(kK).fill(0));
+    for (let j = 0; j < kK; j++) for (const r of [(j * 3 + 1) % kM, (j * 5 + 2) % kM, (j * 2 + 7) % kM]) h1[r][j] = 1;
+    const encodeBlock = (block) => {
+      const codeword = block.slice();
+      const parity = new Array(kM).fill(0);
+      for (let r = 0; r < kM; r++) {
+        let acc = 0;
+        for (let j = 0; j < kK; j++) acc ^= (h1[r][j] & block[j]);
+        if (r > 0) acc ^= parity[r - 1];
+        parity[r] = acc;
+      }
+      return codeword.concat(parity);
+    };
+    let coded = [];
+    for (let b = 0; b < msgBits.length / kK; b++) coded = coded.concat(encodeBlock(msgBits.slice(b * kK, (b + 1) * kK)));
+
+    const sps = 4;
+    const n = coded.length;
+    const samples = new Float32Array(2 * n * sps);
+    for (let i = 0; i < n; i++) {
+      const clean = coded[i] ? -1 : 1;
+      for (let k = 0; k < sps; k++) samples[2 * (i * sps + k)] = clean;
+    }
+    const file = new File([samples.buffer], 'zoh.iq');
+    const opts = { sampleRate: 8000, samplesPerSymbol: sps, fecScheme: 'ldpc', fecMsgLen: msgBits.length, recoverTiming: true };
+
+    const rrc = await bridge.runPipeline(file, opts);
+    assert.equal(rrc.recoveryUsed, true);  // default pulseShape = 'rrc'
+
+    const rect = await bridge.runPipeline(file, { ...opts, pulseShape: 'rect' });
+    assert.equal(rect.recoveryUsed, true);
+  });
+
+  it('rejects an unknown pulseShape', async () => {
+    await assert.rejects(
+      bridge.runPipeline(asFile('mod_bpsk.iq'), { sampleRate: 8000, recoverTiming: true, pulseShape: 'triangle' }),
+      /pulseShape must be 'rrc' or 'rect'/);
+  });
 });
 
 describe('Real-world signal support (raw IQ formats and .sigmf-data) through the bridge', () => {

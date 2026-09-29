@@ -85,6 +85,10 @@ public:
     QCheckBox* softDecodingCheckBox() const { return soft_decoding_; }
     // Real-world signal support: matched-filter timing recovery + carrier tracking.
     QCheckBox* recoverTimingCheckBox() const { return recover_timing_; }
+    // Real-world signal support: which transmit pulse shape recoverTimingCheckBox
+    // should assume ("rrc" or "rect" -- see QComboBox::currentData()). Only matters
+    // when recover timing is on.
+    QComboBox* pulseShapeComboBox() const { return pulse_shape_; }
     // Squares the capture before computing the waterfall (not the demodulated bits --
     // display only): collapses an M-fold symmetric modulation down to reveal an
     // otherwise-invisible carrier tone, the same M=2 trick recover_linear's own coarse
@@ -158,6 +162,7 @@ private:
     QCheckBox* auto_detect_ = nullptr;
     QCheckBox* soft_decoding_ = nullptr;
     QCheckBox* recover_timing_ = nullptr;
+    QComboBox* pulse_shape_ = nullptr;
     QCheckBox* square_signal_ = nullptr;
     QSlider* color_min_slider_ = nullptr;
     QSlider* color_max_slider_ = nullptr;

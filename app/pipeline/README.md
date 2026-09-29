@@ -232,12 +232,24 @@ only happens to work when none of that is present.
 `core/include/recover.hpp`'s `recover_linear` closes part of that gap, for linear
 schemes (PSK/QAM/ASK/OOK), using liquid-dsp's own building blocks rather than
 hand-rolled loops: an M-th-power coarse frequency estimate (via `dsp.hpp`'s existing
-FFT), an RRC-matched polyphase symbol synchronizer for timing recovery
-(`symsync_crcf`), and a decision-directed Costas loop (`nco_crcf` steered by the real
-modem's own phase-error estimate) for fine carrier tracking. `PipelineOptions::
-recover_timing` turns it on; off by default, since it changes what gets decoded and
+FFT), a timing recovery stage selected by `PipelineOptions::pulse_shape` (see below),
+and a decision-directed Costas loop (`nco_crcf` steered by the real modem's own
+phase-error estimate) for fine carrier tracking. `PipelineOptions::recover_timing`
+turns the whole stage on; off by default, since it changes what gets decoded and
 every existing golden-vector test assumes the old naive-decimation behaviour.
 `PipelineResult::recovery_used` says whether it actually ran.
+
+**Pulse shape is a real, separate axis, not a detail of timing recovery.**
+`PipelineOptions::pulse_shape` (default `PulseShape::Rrc`) picks which transmit
+pulse shape the timing stage assumes: `Rrc` uses an RRC-matched polyphase symbol
+synchronizer (`symsync_crcf`), the right choice for a real transmitter that
+pulse-shapes its output. `Rect` assumes no shaping at all (simple NRZ/on-off
+pulses -- PySDR's own `bpsk_rect_20sps.sigmf-data` test file, in particular) and
+uses an integrate-and-dump (boxcar) filter at whichever fixed sample phase gives
+the largest average symbol magnitude instead. These are not interchangeable: an
+RRC filter is not a matched filter for a rectangular pulse, and using it on one
+measurably hurts the lock rather than just failing to help (see
+`core/include/recover.hpp`'s own comment on `PulseShape`).
 
 **Verified, not assumed:** `tests/core/test_recover.cpp` builds a signal impaired with
 liquid's own TX-side RRC interpolator (the correct counterpart to the RX-side matched
@@ -249,12 +261,27 @@ capture, through the exact same FEC-encode chain and file format the real pipeli
 decodes, run through `run_pipeline` and Feature 1 (Parameter Search, since a real
 capture's receiver does not know its exact framing any more than it knows its exact
 timing) -- naive decimation cannot be rescued even by Parameter Search, `recover_timing`
-decodes the message correctly.
+decodes the message correctly. The same two files carry matching tests for
+`PulseShape::Rect` against a genuinely unshaped (zero-order-hold) capture, confirming
+the *reverse* is also true: `Rrc` (the default) is measurably worse than `Rect` on a
+signal that was never RRC-shaped to begin with, not just unhelpfully neutral.
 
 **Known limitations, found while building this, not assumed away:**
 - **Not blind.** The caller still supplies the nominal samples-per-symbol (already a
   required input everywhere else in this pipeline); this recovers the timing *phase*
   and carrier, not the symbol *rate* itself.
+- **`Rect`'s lock point can land mid-codeword, and there is no fix for that here.**
+  `Rrc`'s matched filter always produces one output per input symbol from the very
+  start (early ones are a filter-startup transient, but present); `Rect`'s
+  integrate-and-dump instead locks onto the first *complete* symbol and simply omits
+  any partial one before it, so a start offset that is not a multiple of the nominal
+  samples-per-symbol can lose exactly one bit from the very front of the recovered
+  stream. For a rate-1/2 convolutional code that desyncs bit-pairing for the entire
+  decode, not just the first character -- unlike Parameter Search's ordinary offset
+  scan (which only ever *skips forward* into already-available data and cannot
+  recover a bit that was never there), this is exactly the class of problem the PS's
+  own bitstream-correlation stage (Section v) exists to solve, so it is left there
+  rather than patched into this stage.
 - **FSK is out of scope here.** Its own frequency-discriminator demodulation is
   already far more tolerant of timing/carrier error than PSK/QAM's phase-sensitive
   slicing, and liquid's matched-filter symbol synchronizer used here is built for

@@ -185,7 +185,8 @@ sigapp::PipelineOptions options_from_js(const val& o) {
     if (!present(o)) return options;
     if (o.typeOf().as<std::string>() != "object") throw std::invalid_argument("pipeline options must be an object");
     reject_unknown_keys(o, {"sampleRate", "iqFormat", "samplesPerSymbol", "demod", "interleaver", "fecScheme",
-                            "fecMsgLen", "headerPattern", "autoDetect", "softDecoding", "recoverTiming"}, "pipeline");
+                            "fecMsgLen", "headerPattern", "autoDetect", "softDecoding", "recoverTiming",
+                            "pulseShape"}, "pipeline");
 
     if (present(o["sampleRate"])) options.sample_rate = number_option(o["sampleRate"], "sampleRate");
     if (present(o["iqFormat"])) {
@@ -210,6 +211,12 @@ sigapp::PipelineOptions options_from_js(const val& o) {
     if (present(o["recoverTiming"])) {
         if (o["recoverTiming"].typeOf().as<std::string>() != "boolean") throw std::invalid_argument("option recoverTiming must be a boolean");
         options.recover_timing = o["recoverTiming"].as<bool>();
+    }
+    if (present(o["pulseShape"])) {
+        const std::string shape = string_option(o["pulseShape"], "pulseShape");
+        if (shape == "rrc") options.pulse_shape = sigcore::PulseShape::Rrc;
+        else if (shape == "rect") options.pulse_shape = sigcore::PulseShape::Rect;
+        else throw std::invalid_argument("option pulseShape must be 'rrc' or 'rect'");
     }
 
     const val demod = o["demod"];

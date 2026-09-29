@@ -27,6 +27,7 @@
 #include "interleave_dispatch.hpp"
 #include "rank_analysis.hpp"
 #include "raster.hpp"
+#include "recover.hpp"
 #include "signal_io.hpp"
 
 namespace sigapp {
@@ -83,6 +84,11 @@ struct PipelineOptions {
     // existing golden-vector test's behavior stays exactly as it was unless this is
     // turned on. PipelineResult::recovery_used says whether it actually ran.
     bool recover_timing = false;
+
+    // Which transmit pulse shape recover_timing should assume (ignored unless
+    // recover_timing is on): see sigcore::PulseShape's own comment. Defaults to Rrc,
+    // the common case for real transmitter hardware.
+    sigcore::PulseShape pulse_shape = sigcore::PulseShape::Rrc;
 };
 
 // What the ML classifier decided.

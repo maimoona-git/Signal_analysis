@@ -261,6 +261,19 @@ void MainWindow::buildToolbar() {
                        "recovery and carrier tracking instead of naive decimation."));
     mode_toolbar->addWidget(recover_timing_);
 
+    // Which transmit pulse shape recover_timing should assume -- only matters when
+    // that checkbox is on. See core/include/recover.hpp's own comment on PulseShape
+    // for why "rrc" and "rect" are not interchangeable: the wrong one measurably
+    // hurts the lock on a real capture, not just leaves it unimproved.
+    pulse_shape_ = new QComboBox;
+    pulse_shape_->addItem(QStringLiteral("RRC pulse shape"), QStringLiteral("rrc"));
+    pulse_shape_->addItem(QStringLiteral("Rect (unshaped) pulse"), QStringLiteral("rect"));
+    pulse_shape_->setToolTip(
+        QStringLiteral("Which transmit pulse shape 'Recover timing/carrier' should assume. RRC is "
+                       "the right choice for a real transmitter that pulse-shapes its output; Rect "
+                       "assumes no shaping at all (simple NRZ/on-off pulses)."));
+    mode_toolbar->addWidget(pulse_shape_);
+
     // Squares the capture before computing the waterfall -- display only, does not touch
     // the demodulated bits. See squareSignalCheckBox()'s own comment.
     square_signal_ = new QCheckBox(QStringLiteral("Square signal"));
@@ -328,6 +341,8 @@ void MainWindow::runAnalysis() {
     request.options.auto_detect = auto_detect_->isChecked();
     request.options.soft_decoding = soft_decoding_->isChecked();
     request.options.recover_timing = recover_timing_->isChecked();
+    request.options.pulse_shape = (pulse_shape_->currentData().toString() == QStringLiteral("rect"))
+        ? sigcore::PulseShape::Rect : sigcore::PulseShape::Rrc;
 
     statusBar()->showMessage(QStringLiteral("Running analysis..."));
     running_ = true;
