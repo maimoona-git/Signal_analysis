@@ -12,6 +12,7 @@ set(SIGCORE_PORTABLE_SOURCES
   src/sigmf_meta.cpp
   src/fsk_estimate.cpp
   src/fec_extra.cpp
+  src/fec_ccsds.cpp
   src/modulation_blind.cpp
   src/interleave.cpp
   src/gf256.cpp

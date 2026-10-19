@@ -970,7 +970,7 @@ TEST_CASE("window_samples analyses a bounded slice of a raw capture and reports 
 // message coded with punctured Viterbi 3/4 or RS(255,223) is found by Parameter Search.
 TEST_CASE("Parameter Search finds the new FEC schemes through the pipeline") {
     struct C { const char* fec; size_t payload_bytes; };
-    for (const C c : {C{"viterbi34", 24}, C{"viterbi23", 24}, C{"rs255", 20}}) {
+    for (const C c : {C{"viterbi34", 24}, C{"viterbi23", 24}, C{"rs255", 20}, C{"ccsds_concat", 20}}) {
         std::string message;
         for (size_t i = 0; i < c.payload_bytes; ++i) message += static_cast<char>('A' + (i * 7) % 26);
         Bits payload;

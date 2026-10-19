@@ -6,6 +6,7 @@
 #include "fec.hpp"
 #include "fec_extra.hpp"
 #include "viterbi.hpp"
+#include "fec_ccsds.hpp"
 
 namespace sigapp {
 
@@ -46,6 +47,20 @@ std::optional<size_t> punctured_len(size_t n, unsigned num, unsigned den) {
 
 std::vector<FecKind> build() {
     std::vector<FecKind> k;
+    {
+        // CCSDS RS(255,223) (dual basis) followed by the K=7 rate-1/2 code. Parameter Search only. Listed first on purpose: on its own stream the plain
+        // Viterbi hypothesis also decodes cleanly, and an exact tie keeps the earlier entry, so the
+        // outer-coded (longer, stricter) reading must come before it.
+        FecKind v;
+        v.name = "ccsds_concat"; v.msg_len_in_bytes = true; v.noise_baseline = 0.98; v.verify_threshold = 0.98;
+        v.encode = [](const Bits& b) { return sigcore::ccsds_concat_encode(bits_to_bytes(b)); };
+        v.decode = [](const Bits& b, size_t m) { return bytes_to_bits(sigcore::ccsds_concat_decode(b, m)); };
+        v.msg_len_for = [](size_t n) -> std::optional<size_t> {
+            if (n < 14 || n % 2) return std::nullopt;
+            return block_len(n / 2 - 6, 255 * 8, 223);
+        };
+        k.push_back(v);
+    }
     {
         FecKind v;
         v.name = "viterbi"; v.soft_decode = true; v.noise_baseline = 0.88; v.in_detect_params = true;

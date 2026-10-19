@@ -412,3 +412,15 @@ Also found on the way: `fft_forward` took 17 s on a length with a large prime fa
 
 What this does **not** show: that the app reads arbitrary real protocols. AX.25 over G3RUH is one common
 case; other link layers (pager BCH, other framings) are not implemented.
+
+## CCSDS RS(255,223) + Viterbi (`ccsds_concat`)
+
+`core/src/fec_ccsds.cpp` adds the CCSDS 131.0-B Reed-Solomon code (field polynomial 0x187, roots
+(alpha^11)^112..143, conventional or Berlekamp dual basis) followed by the existing K=7 rate-1/2 Viterbi
+code. The parity of a fixed 223-byte message, in both bases, matches the independent libfec reference
+implementation byte for byte (`tests/core/test_fec_ccsds.cpp`); the decoder corrects 16 byte errors per
+block and refuses 17+. It is searched by Parameter Search only (not by the original auto-detect).
+
+The older `rs255` scheme is the common conventional-basis RS(255,223) over 0x11D, *not* the CCSDS code.
+**Not implemented:** the standard's interleaving depth, pseudo-randomiser and sync marker, so a real
+CCSDS downlink needs those undone first. No real CCSDS recording was available to try it on.
