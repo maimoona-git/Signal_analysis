@@ -24,6 +24,7 @@ if(EMSCRIPTEN)
     -sMODULARIZE=1
     -sEXPORT_NAME=createSigBridge
     -sALLOW_MEMORY_GROWTH=1
+    -sSTACK_SIZE=5MB
     -sENVIRONMENT=web,worker,node
   )
 

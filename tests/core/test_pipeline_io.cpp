@@ -134,6 +134,22 @@ PipelineResult full_result() {
     p.fsk_bandwidth = 0.1f;
     p.fsk_confidence = 0.99;
     p.pulse_shape_used = "rrc 0.25";
+    Ax25Frame fr;
+    fr.destination = "CPSAT1-0";
+    fr.source = "N0CALL-7";
+    fr.digipeaters = {"WIDE1-1", "WIDE2-2"};
+    fr.control = 0x03;
+    fr.has_pid = true;
+    fr.pid = 0xF0;
+    fr.info = {1, 2, 3, 250};
+    fr.raw = {9, 8, 7, 6, 5};
+    fr.bit_offset = 1234;
+    p.frames = {fr, fr};
+    p.frames[1].source = "SECOND-1";
+    p.framing_chain = "NRZI + G3RUH descrambling (polarity inverted)";
+    p.modulation_from_blind_check = true;
+    p.blind_line = 0.61;
+    p.blind_envelope_cv = 0.57;
     return p;
 }
 
@@ -280,6 +296,19 @@ TEST_CASE("PipelineResult: every field survives a round trip") {
     CHECK(r.fsk_bandwidth == p.fsk_bandwidth);
     CHECK(r.fsk_confidence == p.fsk_confidence);
     CHECK(r.pulse_shape_used == p.pulse_shape_used);
+    CHECK(r.frames.size() == 2);
+    if (r.frames.size() == 2) {
+        CHECK(r.frames[0].destination == "CPSAT1-0" && r.frames[0].source == "N0CALL-7");
+        CHECK(r.frames[0].digipeaters == p.frames[0].digipeaters);
+        CHECK(r.frames[0].control == 0x03 && r.frames[0].has_pid && r.frames[0].pid == 0xF0);
+        CHECK(r.frames[0].info == p.frames[0].info && r.frames[0].raw == p.frames[0].raw);
+        CHECK(r.frames[0].bit_offset == 1234);
+        CHECK(r.frames[1].source == "SECOND-1");
+    }
+    CHECK(r.framing_chain == p.framing_chain);
+    CHECK(r.modulation_from_blind_check == p.modulation_from_blind_check);
+    CHECK(r.blind_line == p.blind_line);
+    CHECK(r.blind_envelope_cv == p.blind_envelope_cv);
     // belt and braces: re-serializing the copy gives the same bytes, so nothing was dropped
     CHECK(serialize_result(r) == bytes);
 }

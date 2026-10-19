@@ -379,3 +379,36 @@ recovered bits matched the true transmitted stream with zero errors at that exac
 offset). This is a pre-existing fragility in Parameter Search's own Viterbi-candidate
 generation, not something channel finding introduces, and is left there rather than
 patched into this stage, for the same reason as `PulseShape::Rect`'s own note above.
+
+## Link-layer verification, pulse search and the blind modulation check
+
+Found by running real over-the-air recordings (the ten CPSat beacon captures, BPSK-G3RUH at 9,600 bit/s,
+each with its published AX.25 frame) through the app. None of the FEC families applies to them, so
+nothing could verify a decode, and the shipped classifier called all ten "fsk". Three additions came
+out of that, all with auto-detect on:
+
+- **`framing.hpp`.** NRZI, the G3RUH scrambler (x^17 + x^12 + 1), HDLC flags and bit stuffing, the
+  CRC-16/X-25 frame check and the AX.25 address field, tried over four chains at both polarities. A frame
+  whose CRC checks and whose addresses parse is very unlikely to be chance (random data produced none in
+  300 streams of 20,000 bits), so it counts as verification (`decode_status` Verified, `frames`,
+  `framing_chain`). A frame still open when the stream ends is accepted: filter delay routinely cuts the
+  closing flag.
+- **Pulse search ordered cheap-first.** `pipeline_finish` now tries the requested pulse, then every
+  roll-off (0.25, 0.35, 0.5, 0.75, 1.0) and Rect, with *only* the framing verifier (milliseconds each)
+  before any FEC search. Before that, the FEC searches used the whole time budget on the first try and
+  the other roll-offs were never reached. With the default roll-off 0.35 four of the ten recordings were
+  bit-perfect; with the search all ten are.
+- **`modulation_blind.hpp`.** When the label is "fsk", the raw samples must fail three tests before the
+  pipeline re-reads them as BPSK or QPSK: the blind FSK estimator doubts it, the envelope varies (std/mean
+  >= 0.3 over the strongest 60% of samples) and the 2nd- (BPSK/ASK/OOK) or 4th-power (QPSK) spectrum has a
+  line. Calibrated on 600 synthetic FSK signals (envelope variation never above 0.19: none flagged) and the
+  ten real recordings (0.55-0.84: all flagged). **Honest limit:** the envelope test needs a *burst* (idle
+  noise around the signal, as real captures have); a continuous, steady shaped-BPSK stream has an envelope
+  as flat as noisy FSK, and the check stays silent on it by design.
+
+Also found on the way: `fft_forward` took 17 s on a length with a large prime factor (a real recording's
+97,919 samples cost 16 s in carrier recovery); such lengths now use Bluestein's algorithm (same answer,
+~20 ms).
+
+What this does **not** show: that the app reads arbitrary real protocols. AX.25 over G3RUH is one common
+case; other link layers (pager BCH, other framings) are not implemented.

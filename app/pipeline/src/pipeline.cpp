@@ -64,6 +64,8 @@ struct Analysis {
     unsigned int param_search_bit_offset = 0;
     double param_search_confidence = 0.0;
     bool auto_search_skipped = false;
+    std::vector<Ax25Frame> frames;
+    std::string framing_chain;
 };
 
 // Fraction of whole bytes that are printable ASCII (or \n \r \t): a crude readability score.
@@ -89,6 +91,17 @@ constexpr double kMinAlignmentMargin = 0.03;
 // sizes they are skipped (and the result says so); a window or explicit settings still work.
 constexpr size_t kMaxAutoSearchBits = 300'000;
 constexpr size_t kMaxAutoSearchSamples = 2'000'000;
+// Framing is a handful of linear passes (8 chains), so it can look at far more than the searches can.
+constexpr size_t kMaxFramingBits = 4'000'000;
+
+bool scheme_is_fsk_label(const std::string& label) { return label == "fsk" || label == "FSK"; }
+
+Bits bytes_to_bits_msb(const std::vector<uint8_t>& bytes) {
+    Bits bits(bytes.size() * 8);
+    for (size_t i = 0; i < bytes.size(); ++i)
+        for (int b = 0; b < 8; ++b) bits[i * 8 + static_cast<size_t>(b)] = (bytes[i] >> (7 - b)) & 1u;
+    return bits;
+}
 
 Analysis analyze_samples(const std::vector<std::complex<float>>& samples_for_demod, const std::string& scheme,
                          const PipelineOptions& options, bool recovery_used) {
@@ -103,7 +116,17 @@ Analysis analyze_samples(const std::vector<std::complex<float>>& samples_for_dem
     std::optional<std::string> fec_scheme = options.fec_scheme;
     std::optional<size_t> fec_msg_len = options.fec_msg_len;
 
-    const bool auto_wanted = options.auto_detect && !interleaver.has_value() && !fec_scheme.has_value();
+    // A CRC-valid AX.25 frame in the stream is the strongest verification there is (framing.hpp),
+    // so look for one first; if found, the interleaver/FEC searches below have nothing to add.
+    FramingResult framing;
+    if (options.auto_detect && !interleaver.has_value() && !fec_scheme.has_value() &&
+        a.demodulated_bits.size() <= kMaxFramingBits) {
+        framing = find_ax25_frames(a.demodulated_bits);
+    }
+    const bool framing_ok = framing.found;
+
+    const bool auto_wanted = options.auto_detect && !options.framing_only && !interleaver.has_value() &&
+                             !fec_scheme.has_value() && !framing_ok;
     const bool auto_ok = a.demodulated_bits.size() <= kMaxAutoSearchBits;
     if (auto_wanted && !auto_ok) a.auto_search_skipped = true;
     std::optional<DetectionResult> detection;
@@ -186,7 +209,15 @@ Analysis analyze_samples(const std::vector<std::complex<float>>& samples_for_dem
         }
     }
 
-    if (a.decoded_bits.has_value()) {
+    if (framing_ok) {
+        a.frames = framing.frames;
+        a.framing_chain = framing.chain;
+        const auto& first = framing.frames.front();
+        a.decoded_bits = bytes_to_bits_msb(first.info.empty() ? first.raw : first.info);
+        working = &*a.decoded_bits;
+    }
+
+    if (a.decoded_bits.has_value() && !framing_ok) {
         const Bits re_encoded = fec_encode(*a.decoded_bits, *fec_scheme);
         const size_t n = std::min(re_encoded.size(), pre_decode_hard_bits.size());
         size_t matches = 0;
@@ -221,7 +252,7 @@ Analysis analyze_samples(const std::vector<std::complex<float>>& samples_for_dem
         *a.reencode_agreement >= verify_bar(a.detected_fec ? a.detected_fec : options.fec_scheme) &&
         margin_ok(interleaver, fec_scheme, fec_msg_len, 0);
     std::optional<size_t> used_msg_len = fec_msg_len;
-    if (options.auto_detect && auto_ok && !options.interleaver && !options.fec_scheme && !verified_already) {
+    if (options.auto_detect && !options.framing_only && auto_ok && !framing_ok && !options.interleaver && !options.fec_scheme && !verified_already) {
         try {
             ParamSearchOptions so;
             so.deadline = options.deadline;
@@ -280,7 +311,7 @@ Analysis analyze_samples(const std::vector<std::complex<float>>& samples_for_dem
     const bool aligned_ok = a.param_search_used
         ? margin_ok(a.detected_interleaver, a.detected_fec, used_msg_len, a.param_search_bit_offset)
         : margin_ok(interleaver, fec_scheme, fec_msg_len, 0);
-    if (aligned_ok && a.reencode_agreement && *a.reencode_agreement >= kVerifiedReencodeAgreement) {
+    if (framing_ok || (aligned_ok && a.reencode_agreement && *a.reencode_agreement >= kVerifiedReencodeAgreement)) {
         a.decode_status = DecodeStatus::Verified;
     } else if (a.raster.detected && !a.raster.sync_word.empty()) {
         a.decode_status = DecodeStatus::Structured;
@@ -425,6 +456,25 @@ PipelineResult pipeline_finish(PipelinePrep prep, const Classification& classifi
 
 static PipelineResult pipeline_finish_impl(PipelinePrep prep, const Classification& classification,
                                            const PipelineOptions& options) {
+    // The classifier's most common real-world mistake: calling a real BPSK recording "fsk" (all ten
+    // CPSat recordings, 90-99% confidence). If the label is "fsk" but the raw samples fail the blind
+    // FSK tests and show a linear family's signature (core/include/modulation_blind.hpp), analyse
+    // it as that family. Only with auto-detect on, never against an explicit override.
+    if (options.auto_detect && !options.modulation_override && scheme_is_fsk_label(classification.label) &&
+        prep.signal.num_samples <= kMaxAutoSearchSamples) {
+        const sigcore::BlindLinearCheck blind = sigcore::blind_linear_check(prep.signal.samples);
+        if (!blind.family.empty()) {
+            Classification switched = classification;
+            switched.label = blind.family;
+            PipelineResult r = pipeline_finish_impl(std::move(prep), switched, options);
+            r.modulation_from_blind_check = true;
+            r.classifier_top_label = classification.label;
+            r.blind_envelope_cv = blind.envelope_cv;
+            r.blind_line = blind.family == "bpsk" ? blind.line2 : blind.family == "qpsk" ? blind.line4 : blind.line8;
+            return r;
+        }
+    }
+
     // Gap-list Phase 2.2: the classifier's top label alone decides everything below, so
     // a confident wrong top-1 used to sink the whole decode. If auto-detect is on and
     // the top label does not verify, retry the runner-ups and keep the first that does.
@@ -513,11 +563,48 @@ static PipelineResult pipeline_finish_impl(PipelinePrep prep, const Classificati
         !options.fec_scheme && options.samples_per_symbol > 1 && scheme != "fsk") {
         PipelineOptions base = options;
         base.pulse_search_done = true;
+
+        struct Variant { sigcore::PulseShape shape; float rolloff; };
+        // 0.75 and 1.0 were added after real recordings (the CPSat G3RUH beacons) came out
+        // bit-perfect only at 0.75: a wide, heavily filtered pulse is common on real links.
+        const Variant variants[] = {{sigcore::PulseShape::Rrc, 0.35f}, {sigcore::PulseShape::Rrc, 0.25f},
+                                    {sigcore::PulseShape::Rrc, 0.5f},  {sigcore::PulseShape::Rrc, 0.75f},
+                                    {sigcore::PulseShape::Rrc, 1.0f},  {sigcore::PulseShape::Rect, 0.35f}};
+
+        // Pass 1, cheap: the requested pulse first, then every variant, each with ONLY the link-layer
+        // verifier (a recovery, a demodulation and a CRC check -- milliseconds). A CRC-valid frame
+        // settles which pulse model is right without any FEC search.
+        {
+            PipelineOptions cheap = base;
+            cheap.framing_only = true;
+            auto try_cheap = [&](sigcore::PulseShape shape, float rolloff, bool searched) -> std::optional<PipelineResult> {
+                PipelineOptions alt = cheap;
+                alt.pulse_shape = shape;
+                alt.rolloff = rolloff;
+                try {
+                    PipelineResult cand = pipeline_finish_impl(prep, classification, alt);
+                    if (cand.decode_status == DecodeStatus::Verified) {
+                        cand.pulse_shape_searched = searched;
+                        return cand;
+                    }
+                } catch (const std::exception&) {
+                    // a bad pulse model can fail outright; try the next
+                }
+                return std::nullopt;
+            };
+            if (auto hit = try_cheap(options.pulse_shape, options.rolloff, false)) return *hit;
+            for (const Variant& v : variants) {
+                const bool same = v.shape == options.pulse_shape &&
+                                  (v.shape == sigcore::PulseShape::Rect || v.rolloff == options.rolloff);
+                if (same) continue;
+                if (auto hit = try_cheap(v.shape, v.rolloff, true)) return *hit;
+            }
+        }
+
+        // Pass 2, thorough: the requested pulse with the full searches (interleaver/FEC), then each
+        // other pulse the same way until the time budget runs out.
         PipelineResult best = pipeline_finish_impl(prep, classification, base);
         if (best.decode_status != DecodeStatus::Verified) {
-            struct Variant { sigcore::PulseShape shape; float rolloff; };
-            const Variant variants[] = {{sigcore::PulseShape::Rrc, 0.35f}, {sigcore::PulseShape::Rrc, 0.25f},
-                                        {sigcore::PulseShape::Rrc, 0.5f}, {sigcore::PulseShape::Rect, 0.35f}};
             for (const Variant& v : variants) {
                 if (options.deadline && std::chrono::steady_clock::now() > *options.deadline) break;
                 const bool same = v.shape == options.pulse_shape &&
@@ -626,6 +713,8 @@ static PipelineResult pipeline_finish_impl(PipelinePrep prep, const Classificati
     result.param_search_bit_offset = best.param_search_bit_offset;
     result.param_search_confidence = best.param_search_confidence;
     result.auto_search_skipped = best.auto_search_skipped;
+    result.frames = std::move(best.frames);
+    result.framing_chain = std::move(best.framing_chain);
 
     result.file_path = prep.signal.path;
     result.sample_rate = prep.signal.sample_rate;

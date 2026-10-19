@@ -361,6 +361,23 @@ std::vector<uint8_t> serialize_result(const PipelineResult& p) {
     w.pod(p.fsk_bandwidth);
     w.pod(p.fsk_confidence);
     w.str(p.pulse_shape_used);
+    w.sz(p.frames.size());
+    for (const auto& f : p.frames) {
+        w.str(f.destination);
+        w.str(f.source);
+        w.sz(f.digipeaters.size());
+        for (const auto& d : f.digipeaters) w.str(d);
+        w.pod(f.control);
+        w.b(f.has_pid);
+        w.pod(f.pid);
+        w.vec(f.info);
+        w.vec(f.raw);
+        w.sz(f.bit_offset);
+    }
+    w.str(p.framing_chain);
+    w.b(p.modulation_from_blind_check);
+    w.pod(p.blind_line);
+    w.pod(p.blind_envelope_cv);
     return std::move(w.out);
 }
 
@@ -463,6 +480,25 @@ PipelineResult deserialize_result(const uint8_t* data, size_t size) {
     p.fsk_bandwidth = r.pod<float>();
     p.fsk_confidence = r.pod<double>();
     p.pulse_shape_used = r.str();
+    const size_t nframes = r.sz();
+    for (size_t i = 0; i < nframes; ++i) {
+        Ax25Frame f;
+        f.destination = r.str();
+        f.source = r.str();
+        const size_t ndig = r.sz();
+        for (size_t k = 0; k < ndig; ++k) f.digipeaters.push_back(r.str());
+        f.control = r.pod<uint8_t>();
+        f.has_pid = r.b();
+        f.pid = r.pod<uint8_t>();
+        f.info = r.vec<uint8_t>();
+        f.raw = r.vec<uint8_t>();
+        f.bit_offset = r.sz();
+        p.frames.push_back(std::move(f));
+    }
+    p.framing_chain = r.str();
+    p.modulation_from_blind_check = r.b();
+    p.blind_line = r.pod<double>();
+    p.blind_envelope_cv = r.pod<double>();
     r.finish();
     return p;
 }

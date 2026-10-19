@@ -252,6 +252,27 @@ describe('the Qt-WASM app in real Chrome', () => {
     }
   });
 
+  it('a cubesat-style AX.25 beacon is decoded end to end, from the real classifier\'s answer', async () => {
+    // Synthetic G3RUH/NRZI/HDLC beacon as 20 samples/symbol BPSK (tests/data/pipeline/ax25_g3ruh_beacon.iq).
+    // The page runs the REAL classifier (in the worker), then the app applies the blind symbol-rate
+    // estimate and re-runs by itself; whatever the classifier says, the app must end up with the frame.
+    let st = await state();
+    if (!st.autoDetect) await click(st.controls.autoDetect);
+    await page.evaluate((b64) => window.sigApp.sigAppOpenFile(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)), 'beacon.iq'),
+      fs.readFileSync(path.join(dataDir, 'ax25_g3ruh_beacon.iq')).toString('base64'));
+    st = await waitFor('the beacon file', (x) => x.filename === 'beacon.iq');
+    await click(st.controls.sampleRate);
+    await page.keyboard.press('End');
+    for (let i = 0; i < 12; i++) await page.keyboard.press('Backspace');
+    await page.keyboard.type('192000');
+    await click((await state()).controls.run);
+    st = await waitFor('the beacon to verify', (x) => /Decoded message verified/.test(x.status) || x.status === 'Analysis failed.', 120000);
+    assert.match(st.status, /Decoded message verified/);
+    assert.match(st.resultText, /AX\.25 frames:\s+1 found, CRC-16 valid/);
+    assert.match(st.resultText, /SYNTHETIC BEACON: ALL SYSTEMS NOMINAL 0042/);
+    assert.match(st.resultText, /CPSAT1-0 > CPSAT1-0/);
+  });
+
   it('the page stays responsive while a long analysis runs in the worker', async () => {
     // Noise with auto-detect on makes every automatic search run until its 5 s time budget. Before
     // the analysis worker that froze the page for the duration; now state queries (which need the
@@ -308,6 +329,12 @@ describe('the Qt-WASM app in real Chrome', () => {
       }
       for (let off = window; off < 2 * window; off += tone.length) fs.writeSync(fd, tone, 0, tone.length, off);
       let s = await state();
+      // the tone is 1000 Hz at 8 kHz; earlier tests leave other rates in the field, so set it
+      await click(s.controls.sampleRate);
+      await page.keyboard.press('End');
+      for (let i = 0; i < 12; i++) await page.keyboard.press('Backspace');
+      await page.keyboard.type('8000');
+      s = await state();
       const [chooser] = await Promise.all([page.waitForFileChooser({ timeout: 10000 }), click(s.controls.open)]);
       await chooser.accept([big]);
       s = await waitFor('the big file', (x) => x.filename.startsWith('sig-streaming-'), 120000);

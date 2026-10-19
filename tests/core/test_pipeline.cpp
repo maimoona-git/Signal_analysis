@@ -20,6 +20,7 @@
 #include <liquid/liquid.h>
 
 #include "fec_dispatch.hpp"
+#include "framing.hpp"
 #include "param_search.hpp"
 #include "pipeline.hpp"
 #include "result_text.hpp"
@@ -1066,6 +1067,131 @@ TEST_CASE("auto-detect is skipped, and reported, on a capture too large to searc
     CHECK(!r.detection_score.has_value());
     CHECK(!r.param_search_used);
     CHECK(format_result_text(r, 100, false, true).find("Auto-detect:          skipped") != std::string::npos);
+}
+
+// Link-layer framing as a verifier: a G3RUH-scrambled, NRZI-coded AX.25 beacon (the CPSat / cubesat
+// style) sent as pulse-shaped BPSK with a carrier offset, a start offset and noise. No FEC in the
+// app's families applies to it, yet a CRC-valid AX.25 frame in the recovered bits verifies it.
+TEST_CASE("a G3RUH AX.25 beacon through recovered BPSK is found and reported verified") {
+    std::vector<uint8_t> frame = {0x86, 0xa0, 0xa6, 0x82, 0xa8, 0x62, 0xe0, 0x86, 0xa0, 0xa6, 0x82, 0xa8, 0x62, 0x61, 0x03, 0xf0};
+    const std::string text = "CPSAT BEACON TEST PAYLOAD 0123456789";
+    frame.insert(frame.end(), text.begin(), text.end());
+    const Bits line = nrzi_encode(g3ruh_scramble(hdlc_encode(frame, 60, 6)));
+    const auto symbols = sigapp::modulate(line, "bpsk");
+    const unsigned sps = 8;
+    const auto impaired = make_impaired_iq(symbols, sps, 0.002f, 0.03f, 3, 777);
+    const auto bytes = iq_bytes(impaired);
+
+    PipelineOptions o;
+    o.sample_rate = 8000.0;
+    o.samples_per_symbol = sps;
+    o.recover_timing = true;
+    o.auto_detect = true;
+    const auto r = run_pipeline(bytes.data(), bytes.size(), "beacon.iq", o, {"bpsk", 0.9});
+    CHECK(r.decode_status == DecodeStatus::Verified);
+    CHECK(r.frames.size() >= 1);
+    if (!r.frames.empty()) {
+        CHECK(r.frames[0].destination == "CPSAT1-0");
+        CHECK(std::string(r.frames[0].info.begin(), r.frames[0].info.end()) == text);
+    }
+    CHECK(r.framing_chain.find("G3RUH") != std::string::npos);
+    CHECK(r.decoded_bits.has_value());
+    if (r.decoded_bits) CHECK(bits_to_text(*r.decoded_bits) == text);
+    CHECK(format_result_text(r, SIZE_MAX, false, true).find("AX.25 frames:") != std::string::npos);
+    CHECK(format_result_json(r).find("\"ax25_frames\"") != std::string::npos);
+}
+
+TEST_CASE("the same beacon sent as FSK is verified through the FSK demodulator too") {
+    std::vector<uint8_t> frame = {0x86, 0xa0, 0xa6, 0x82, 0xa8, 0x62, 0xe0, 0x86, 0xa0, 0xa6, 0x82, 0xa8, 0x62, 0x61, 0x03, 0xf0};
+    const std::string text = "FSK PATH PAYLOAD";
+    frame.insert(frame.end(), text.begin(), text.end());
+    const Bits line = nrzi_encode(g3ruh_scramble(hdlc_encode(frame, 40, 4)));
+    const auto samples = sigcore::fsk_modulate(line, 1, 8, 0.25f);
+    const auto bytes = iq_bytes(samples);
+    PipelineOptions o;
+    o.sample_rate = 8000.0;
+    o.auto_detect = true;
+    const auto r = run_pipeline(bytes.data(), bytes.size(), "fskbeacon.iq", o, {"fsk", 0.9});
+    CHECK(r.decode_status == DecodeStatus::Verified);
+    CHECK(r.frames.size() == 1);
+    if (r.frames.size() == 1) CHECK(std::string(r.frames[0].info.begin(), r.frames[0].info.end()) == text);
+}
+
+// The classifier's real-world mistake, reproduced: a BPSK burst called "fsk". The blind check
+// notices the signal is not FSK and the pipeline analyses it as BPSK -- and, with the link-layer
+// verifier, the beacon inside decodes. The same capture with an explicit override is left alone.
+TEST_CASE("a BPSK burst the classifier calls FSK is re-read as BPSK") {
+    std::vector<uint8_t> frame = {0x86, 0xa0, 0xa6, 0x82, 0xa8, 0x62, 0xe0, 0x86, 0xa0, 0xa6, 0x82, 0xa8, 0x62, 0x61, 0x03, 0xf0};
+    const std::string text = "MISLABELLED AS FSK";
+    frame.insert(frame.end(), text.begin(), text.end());
+    const Bits line = nrzi_encode(g3ruh_scramble(hdlc_encode(frame, 80, 6)));
+    const auto symbols = sigapp::modulate(line, "bpsk");
+    const unsigned sps = 8;
+    auto burst = make_impaired_iq(symbols, sps, 0.002f, 0.0f, 3, 4242);
+    // idle noise before and after, as a real recording has
+    std::vector<std::complex<float>> capture;
+    uint32_t seed = 99;
+    auto noise = [&] { seed = seed * 1664525u + 1013904223u; return (static_cast<float>(seed >> 8) / 8388608.0f - 1.0f) * 0.05f; };
+    for (size_t i = 0; i < burst.size(); ++i) capture.push_back({noise(), noise()});
+    for (const auto& v : burst) capture.push_back(v + std::complex<float>(noise(), noise()));
+    for (size_t i = 0; i < burst.size(); ++i) capture.push_back({noise(), noise()});
+    const auto bytes = iq_bytes(capture);
+
+    PipelineOptions o;
+    o.sample_rate = 8000.0;
+    o.samples_per_symbol = sps;
+    o.recover_timing = true;
+    o.auto_detect = true;
+    const auto r = run_pipeline(bytes.data(), bytes.size(), "mislabelled.iq", o, {"fsk", 0.99});
+    CHECK(r.modulation_from_blind_check);
+    CHECK(r.classifier_top_label == "fsk");
+    CHECK(r.predicted_modulation == "bpsk");
+    CHECK(r.decode_status == DecodeStatus::Verified);
+    CHECK(r.frames.size() >= 1);
+    CHECK(format_result_text(r, SIZE_MAX, false, true).find("Modulation check:") != std::string::npos);
+
+    PipelineOptions forced = o;
+    forced.modulation_override = "fsk";
+    const auto kept = run_pipeline(bytes.data(), bytes.size(), "mislabelled.iq", forced, {"fsk", 0.99});
+    CHECK(!kept.modulation_from_blind_check);
+    CHECK(kept.predicted_modulation == "fsk");
+}
+
+TEST_CASE("genuine FSK keeps its label through the blind check") {
+    const Bits bits = [] { Bits b; for (int i = 0; i < 6000; ++i) b.push_back((i * 2654435761u >> 9) & 1); return b; }();
+    const auto samples = sigcore::fsk_modulate(bits, 1, 8, 0.2f);
+    const auto bytes = iq_bytes(samples);
+    PipelineOptions o;
+    o.sample_rate = 8000.0;
+    o.auto_detect = true;
+    const auto r = run_pipeline(bytes.data(), bytes.size(), "fsk.iq", o, {"fsk", 0.99});
+    CHECK(!r.modulation_from_blind_check);
+    CHECK(r.predicted_modulation == "fsk");
+}
+
+// The committed synthetic beacon (tests/data/pipeline/ax25_g3ruh_beacon.iq, made to the recipe in the
+// CPSat recordings' README): the GUI's own two-step flow -- run once, apply the blind symbol-rate
+// estimate, run again -- ends with the frame found, from a classifier that says "fsk".
+TEST_CASE("the beacon fixture is decoded by the GUI's own two-step flow from a wrong classifier label") {
+    const auto bytes = read_file(data_path("ax25_g3ruh_beacon.iq"));
+    const Classification ml{"fsk", 0.99, {{"qam64", 0.01, {}}, {"bpsk", 0.005, {}}}};
+    PipelineOptions first;
+    first.sample_rate = 192000.0;
+    first.auto_detect = true;
+    first.recover_timing = true;
+    first.fsk_auto = true;
+    const auto r1 = run_pipeline(bytes.data(), bytes.size(), "beacon.iq", first, ml);
+    CHECK(r1.decode_status != DecodeStatus::Verified);  // 1 sample/symbol cannot recover anything yet
+    CHECK(r1.symbol_rate_estimate.has_value());
+    if (!r1.symbol_rate_estimate) return;
+    CHECK(std::abs(r1.symbol_rate_estimate->samples_per_symbol - 20.0) < 0.5);
+    PipelineOptions second = first;
+    second.samples_per_symbol = static_cast<unsigned>(std::lround(r1.symbol_rate_estimate->samples_per_symbol));
+    const auto r2 = run_pipeline(bytes.data(), bytes.size(), "beacon.iq", second, ml);
+    CHECK(r2.decode_status == DecodeStatus::Verified);
+    CHECK(r2.modulation_from_blind_check);
+    CHECK(r2.frames.size() == 1);
+    if (r2.frames.size() == 1) CHECK(std::string(r2.frames[0].info.begin(), r2.frames[0].info.end()) == "SYNTHETIC BEACON: ALL SYSTEMS NOMINAL 0042");
 }
 
 // Gap-list Phase 1.5 (Problem C): modulation_override replaces the classifier's own

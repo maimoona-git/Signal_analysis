@@ -19,6 +19,7 @@ add_library(sigpipeline STATIC
   src/param_search.cpp
   src/pipeline.cpp
   src/pipeline_io.cpp
+  src/framing.cpp
   src/result_text.cpp
 )
 target_include_directories(sigpipeline PUBLIC include)

@@ -1,15 +1,15 @@
 # Test coverage: this port vs the native app's suite
 
 The native app has **118 tests** (94 test functions, some parametrised) in 23 files. This
-port has **365 automated tests** plus **608 recorded comparisons against the original** (five of the
+port has **385 automated tests** plus **608 recorded comparisons against the original** (five of the
 84 pipeline scenarios now differ from the original on purpose -- see the notes at the bottom):
 
 | Suite | Tests | Runs on | Command |
 | --- | ---: | --- | --- |
-| C++ core / pipeline / bridge (25 programs) | 277 (229 without the GUI widgets) | native; WASM under node | `ctest` |
+| C++ core / pipeline / bridge (27 programs) | 296 (248 without the GUI widgets) | native; WASM under node | `ctest` |
 | GUI widgets (`test_gui`, among the above) | 48 | desktop Qt, offscreen | `ctest` (native, needs Qt) |
 | JS bridge + model + pipeline (`tests/bridge/*.test.mjs`) | 69 | WASM under node | `ctest` (`test_bridge_js`) |
-| The browser app in real Chrome (`tests/gui/browser-gui.test.mjs`) | 18 (+1 opt-in) | headless Chrome | `ctest` (`test_browser_gui`) |
+| The browser app in real Chrome (`tests/gui/browser-gui.test.mjs`) | 19 (+1 opt-in) | headless Chrome | `ctest` (`test_browser_gui`) |
 | The static site, relocated, stock server | 1 script (re-runs the 14) | headless Chrome | `ctest` (`test_static_site`) |
 | ML chain smoke (`scripts/browser-smoke.sh`) | 11 captures + 2 pipelines | headless Chrome | manual |
 

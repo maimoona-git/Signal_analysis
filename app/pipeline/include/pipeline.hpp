@@ -26,6 +26,8 @@
 #include "channel_finder.hpp"
 #include "correlate.hpp"
 #include "demod_dispatch.hpp"
+#include "framing.hpp"
+#include "modulation_blind.hpp"
 #include "interleave_dispatch.hpp"
 #include "rank_analysis.hpp"
 #include "raster.hpp"
@@ -128,6 +130,11 @@ struct PipelineOptions {
     // first that verifies (PipelineResult::pulse_shape_searched). Set internally to stop
     // the retry recursing; callers leave it alone.
     bool pulse_search_done = false;
+    // Internal (like `deadline`, not carried over the worker wire): run only the cheap link-layer
+    // verifier (framing.hpp) and skip detect_params / Parameter Search. The pulse-shape search tries
+    // every variant this way first, so the expensive FEC searches never eat the time budget before
+    // a roll-off that a CRC can verify has even been tried.
+    bool framing_only = false;
 
     // Gap-list Phase 2 safety bound: the automatic searches (Parameter Search, top-3
     // modulation retry, pulse/roll-off retry) multiply, and on a capture that simply is not
@@ -370,6 +377,20 @@ struct PipelineResult {
     // Auto-detect, Parameter Search and the retries are skipped on very large captures (they cost
     // far more than the analysis itself); set when that happened to a run that asked for them.
     bool auto_search_skipped = false;
+
+    // Link-layer framing (framing.hpp): CRC-valid AX.25 frames found in the demodulated stream
+    // (auto-detect on). Finding one verifies the whole chain, so decode_status is Verified and
+    // decoded_bits holds the first frame's information field.
+    std::vector<Ax25Frame> frames;
+    std::string framing_chain;
+
+    // Set when the classifier said "fsk" but the signal failed the blind FSK tests (no tone
+    // clusters, a varying envelope, a spectral line in its squared signal) and the pipeline
+    // treated it as the linear family sigcore::blind_linear_check named instead.
+    // classifier_top_label then says "fsk". blind_line is the line strength that decided it.
+    bool modulation_from_blind_check = false;
+    double blind_line = 0.0;
+    double blind_envelope_cv = 0.0;
 
     // Gap-list Phase 2.2: set when an alternative (not the classifier's top) label was
     // the one that verified; classifier_top_label then says what the top guess was.

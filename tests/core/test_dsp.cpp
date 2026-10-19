@@ -4,6 +4,7 @@
 // what both must meet.
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <vector>
@@ -93,6 +94,39 @@ TEST_CASE("fft matches a reference DFT for non-power-of-two sizes (mixed radix /
             CHECK_NEAR(y[k].imag(), ref[k].imag(), 2e-2);
         }
     }
+}
+
+// Found with a real recording: a length with a large prime factor (97,919 samples) sent liquid's
+// mixed-radix FFT down an O(n^2) path that cost 16 s inside carrier recovery. Such lengths now take
+// Bluestein's algorithm: the same answer, in milliseconds.
+TEST_CASE("fft of a length with a large prime factor is fast and matches the reference DFT") {
+    // a prime (3001) and 2 x 1499, both large enough to take the Bluestein path
+    for (unsigned int n : {3001u, 2998u}) {
+        std::vector<cf> x(n);
+        for (unsigned int i = 0; i < n; ++i)
+            x[i] = cf(std::sin(0.21f * i) + 0.25f * std::cos(2.9f * i), std::sin(0.05f * i * i));
+        const auto y = fft_forward(x);
+        const auto ref = naive_dft(x);
+        double worst = 0.0;
+        for (unsigned int k = 0; k < n; ++k)
+            worst = std::max({worst, std::abs(double(y[k].real()) - ref[k].real()), std::abs(double(y[k].imag()) - ref[k].imag())});
+        CHECK(worst < 2e-2);
+    }
+    const unsigned int big = 100003;  // prime: ~17 s before
+    std::vector<cf> x(big);
+    for (unsigned int i = 0; i < big; ++i) x[i] = cf(float(i % 7), float(i % 5));
+    const auto start = std::chrono::steady_clock::now();
+    const auto y = fft_forward(x);
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    CHECK(y.size() == big);
+    CHECK(seconds < 2.0);
+    // and the answer is right where it is cheap to check: the DC bin is the sum, Parseval holds
+    std::complex<double> sum = 0;
+    double energy_t = 0, energy_f = 0;
+    for (const auto& v : x) { sum += std::complex<double>(v); energy_t += std::norm(std::complex<double>(v)); }
+    for (const auto& v : y) energy_f += std::norm(std::complex<double>(v));
+    CHECK_NEAR(y[0].real(), sum.real(), 1.0);
+    CHECK_NEAR(energy_f / big, energy_t, energy_t * 1e-3);
 }
 
 TEST_CASE("fft is linear and preserves energy (Parseval)") {

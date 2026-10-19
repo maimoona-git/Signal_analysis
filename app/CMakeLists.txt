@@ -31,7 +31,7 @@ if(EMSCRIPTEN)
   # output runs from any plain static host without COOP/COEP headers.
   # The heap grows on demand up to 4 GB (the default cap is 2 GB): a large capture is held
   # several times over while it is analysed (measured: a 512 MB file fits in 2 GB, 1 GB does not).
-  target_link_options(sigapp PRIVATE -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4GB)
+  target_link_options(sigapp PRIVATE -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4GB -sSTACK_SIZE=5MB)
 
   # The static site: <build>/dist is rebuilt from scratch on every build (so stale files
   # cannot accumulate) and holds exactly what a plain static file server needs, nothing else:

@@ -18,6 +18,11 @@ std::string printf_string(const char* format, double value) {
 // Python prints an absent optional as None.
 std::string or_none(const std::optional<std::string>& v) { return v ? *v : "None"; }
 
+std::string hex_byte(uint8_t v) {
+    static const char* d = "0123456789abcdef";
+    return std::string(1, d[v >> 4]) + d[v & 15];
+}
+
 std::string bits_string(const Bits& bits) {
     std::string s;
     for (uint8_t b : bits) s += b ? '1' : '0';
@@ -86,6 +91,16 @@ std::string format_result_text(const PipelineResult& r, size_t max_message_chars
             line("Strongest signal:     " + format_g(*r.signal_offset_hz) + " Hz from center, ~" +
                  format_g(*r.signal_bandwidth_hz) + " Hz wide (within 10 dB of the peak)");
         }
+        if (!r.frames.empty()) {
+            const Ax25Frame& f = r.frames.front();
+            std::string via;
+            for (const auto& d : f.digipeaters) via += "," + d;
+            line("AX.25 frames:         " + std::to_string(r.frames.size()) + " found, CRC-16 valid (" + r.framing_chain + ")");
+            line("  first frame:        " + f.source + " > " + f.destination + via + ", control 0x" +
+                 hex_byte(f.control) +
+                 (f.has_pid ? ", PID 0x" + hex_byte(f.pid) : std::string()) + ", " + std::to_string(f.info.size()) +
+                 " info bytes");
+        }
         if (r.auto_search_skipped) {
             line("Auto-detect:          skipped (capture too large to search; analyse a smaller window)");
         }
@@ -108,6 +123,11 @@ std::string format_result_text(const PipelineResult& r, size_t max_message_chars
     line("Spectrogram shape:    (" + std::to_string(r.spectrogram.frames) + ", " + std::to_string(r.spectrogram.nfft) + ")");
     line("");
     line("Predicted modulation: " + r.predicted_modulation + " (confidence " + printf_string("%.2f", r.predicted_confidence) + ")");
+    if (show_decode_status && r.modulation_from_blind_check) {
+        line("Modulation check:     classifier said " + r.classifier_top_label + ", but the signal is not FSK (envelope varies " +
+             printf_string("%.2f", r.blind_envelope_cv) + ", squared-signal line " + printf_string("%.2f", r.blind_line) +
+             "); analysed as " + r.predicted_modulation);
+    }
     if (show_decode_status && r.modulation_from_search) {
         line("Modulation search:    classifier's top guess was " + r.classifier_top_label +
              "; " + r.predicted_modulation + " is the one that verified");
@@ -294,7 +314,12 @@ std::string format_result_json(const PipelineResult& r) {
     field("num_samples", std::to_string(r.num_samples));
     field("modulation", jstr(r.predicted_modulation));
     field("modulation_confidence", jnum(r.predicted_confidence));
-    if (r.modulation_from_search) field("classifier_top_label", jstr(r.classifier_top_label));
+    if (r.modulation_from_search || r.modulation_from_blind_check) field("classifier_top_label", jstr(r.classifier_top_label));
+    if (r.modulation_from_blind_check) {
+        field("modulation_from_blind_check", "true");
+        field("blind_envelope_cv", jnum(r.blind_envelope_cv));
+        field("blind_line", jnum(r.blind_line));
+    }
     field("samples_per_symbol_used", std::to_string(r.samples_per_symbol_used));
     if (r.symbol_rate_estimate) {
         field("symbol_rate_estimate_samples_per_symbol", jnum(r.symbol_rate_estimate->samples_per_symbol));
@@ -309,6 +334,24 @@ std::string format_result_json(const PipelineResult& r) {
     if (r.detected_interleaver) field("interleaver", jstr(r.detected_interleaver->kind));
     if (r.detected_fec) field("fec", jstr(*r.detected_fec));
     field("auto_search_skipped", r.auto_search_skipped ? "true" : "false");
+    if (!r.frames.empty()) {
+        field("framing_chain", jstr(r.framing_chain));
+        std::string arr = "[";
+        for (size_t i = 0; i < r.frames.size(); ++i) {
+            const Ax25Frame& f = r.frames[i];
+            std::string digis = "[";
+            for (size_t k = 0; k < f.digipeaters.size(); ++k) digis += (k ? ", " : "") + jstr(f.digipeaters[k]);
+            digis += "]";
+            std::string info_hex;
+            for (uint8_t b : f.info) info_hex += hex_byte(b);
+            arr += std::string(i ? ", " : "") + "{\"destination\": " + jstr(f.destination) + ", \"source\": " + jstr(f.source) +
+                   ", \"digipeaters\": " + digis + ", \"control\": " + std::to_string(f.control) +
+                   ", \"pid\": " + (f.has_pid ? std::to_string(f.pid) : std::string("null")) +
+                   ", \"info_hex\": " + jstr(info_hex) + "}";
+        }
+        arr += "]";
+        field("ax25_frames", arr);
+    }
     field("param_search_used", r.param_search_used ? "true" : "false");
     if (r.param_search_used) field("param_search_confidence", jnum(r.param_search_confidence));
     if (r.reencode_agreement) field("reencode_agreement", jnum(*r.reencode_agreement));
