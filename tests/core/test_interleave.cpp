@@ -89,4 +89,39 @@ TEST_CASE("golden interleaver output: convolutional 4x2") {
     CHECK_EQ(fnv1a(convolutional_interleave(random_bits(128, 42), 4, 2)), 520687930);
 }
 
+// Pins the pseudo-random permutation itself at a few (n, seed) pairs, readably
+// (not just an opaque hash): make_permutation is no longer std::shuffle(std::
+// mt19937) directly (an explicit, portable reimplementation replaced it -- see
+// core/src/interleave.cpp's own comment on why: std::shuffle's exact algorithm
+// is implementation-defined, so the old code silently produced a DIFFERENT
+// permutation for the same seed on libstdc++ vs libc++, breaking the
+// "identical results for every analyst" promise). These three were computed
+// directly from the real std::shuffle(std::mt19937) on this project's own
+// Clang/libc++ build (what every existing golden fixture already matches),
+// confirmed bit-for-bit against the new explicit implementation before this
+// test was written -- so this pins old (and still correct) behavior, not a
+// new assumption.
+//
+// bits[i] = i % 2 is deliberately simple: pseudo_random_interleave's output
+// at position i is bits[perm[i]] = perm[i] % 2 for this specific input, which
+// makes the expected output directly readable off the permutation itself
+// (listed in each comment) rather than needing it re-derived by a reader.
+TEST_CASE("golden pseudo-random permutation, pinned directly (not just hashed)") {
+    auto alternating = [](size_t n) {
+        std::vector<uint8_t> bits(n);
+        for (size_t i = 0; i < n; ++i) bits[i] = static_cast<uint8_t>(i % 2);
+        return bits;
+    };
+
+    // perm = [4, 2, 0, 1, 3]
+    const std::vector<uint8_t> expected5 = {0, 0, 0, 1, 1};
+    CHECK(pseudo_random_interleave(alternating(5), 7) == expected5);
+    // perm = [1, 4, 3, 2, 5, 0, 8, 7, 9, 6]
+    const std::vector<uint8_t> expected10 = {1, 0, 1, 0, 1, 0, 0, 1, 1, 0};
+    CHECK(pseudo_random_interleave(alternating(10), 99) == expected10);
+    // perm = [8, 11, 2, 3, 15, 9, 13, 0, 12, 7, 5, 6, 10, 14, 1, 4]
+    const std::vector<uint8_t> expected16 = {0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0};
+    CHECK(pseudo_random_interleave(alternating(16), 2024) == expected16);
+}
+
 TEST_MAIN()

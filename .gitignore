@@ -24,3 +24,25 @@ ml/checkpoints/
 # not part of the repo (untracked on purpose; do not re-add).
 CLAUDE.md
 PROJECT_HANDOFF.md
+
+# Real captures: only synthetic fixtures (tests/data/) and synthetic demo
+# captures (demo/ -- see demo/README.md) are meant to be committed. A real
+# off-air/SDR recording dropped in the repo root (or anywhere else) while
+# testing against it should never end up committed by accident -- besides
+# bloating the repo, it may carry content the person who captured it would
+# not want pushed to a public history.
+*.iq
+*.IQ
+*.wav
+*.sigmf-data
+*.sigmf-meta
+!tests/data/**/*.iq
+!tests/data/**/*.IQ
+!tests/data/**/*.wav
+!tests/data/**/*.sigmf-data
+!tests/data/**/*.sigmf-meta
+!demo/*.iq
+!demo/*.IQ
+!demo/*.wav
+!demo/*.sigmf-data
+!demo/*.sigmf-meta

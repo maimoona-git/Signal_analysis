@@ -72,7 +72,8 @@
   <!-- App shell: hosts the Qt-for-WASM canvas and supplies the two things the WASM module
        cannot do itself: (1) the ML model, run with onnxruntime-web, which the C++ pipeline
        calls out to through Module.sigMlClassifier (see bridge/README.md), and (2) dropping a
-       file onto the page. Everything is served from this origin, so it works offline.
+       file onto the page. Everything is served from this origin: no CDN or third-party requests (there is
+       no service worker, so the host still has to serve these files).
        Single-threaded build: no COOP/COEP headers needed on the host. -->
   <div id="status">Loading Deconflicted…<small id="detail"></small></div>
   <div id="screen"></div>
@@ -121,6 +122,81 @@
       });
       window.sigApp = app;   // the Embind hooks (sigAppOpenFile, sigAppState), for scripts and tests
 
+      // The analysis worker (see js/analysis-worker.js): the pipeline runs in a second WASM instance
+      // off this thread, so a long search cannot freeze the UI. The Qt app asks the page whether
+      // it is usable (sigWorkerRun returns false if not) and falls back to running in its own
+      // module, so a browser or host that cannot start the worker still analyses, just blocking.
+      let worker = null;
+      let workerState = 'starting';            // starting | ready | broken
+      const workerWaiting = [];                // runs requested while it was still starting
+      const workerPending = new Map();         // id -> true while a run is outstanding
+      const failRun = (id, message, unavailable) => { workerPending.delete(id); app.sigWorkerDone(id, null, message, unavailable); };
+      const breakWorker = (message) => {
+        workerState = 'broken';
+        console.error('analysis worker unavailable:', message);
+        for (const id of [...workerPending.keys()]) failRun(id, message, true);
+        workerWaiting.length = 0;
+      };
+      const postRun = (job) => worker.postMessage({ type: 'run', ...job }, [job.bytes.buffer, job.options.buffer]);
+      try {
+        worker = new Worker('js/analysis-worker.js');
+        worker.onmessage = (event) => {
+          const m = event.data;
+          if (m.type === 'ready') {
+            workerState = 'ready';
+            for (const job of workerWaiting.splice(0)) postRun(job);
+          } else if (m.type === 'init-failed') {
+            breakWorker(m.error);
+          } else if (m.type === 'done') {
+            workerPending.delete(m.id);
+            app.sigWorkerDone(m.id, m.blob ?? null, m.error ?? '', false);
+          }
+        };
+        worker.onerror = (event) => breakWorker(event.message || 'the worker crashed');
+        worker.postMessage({ type: 'init', base: document.baseURI });
+      } catch (e) {
+        workerState = 'broken';
+        console.error('could not start the analysis worker:', e);
+      }
+      // (id, bytes, filename, options): true if the worker took the job, false if it cannot.
+      window.sigWorkerRun = (id, bytes, filename, options) => {
+        if (workerState === 'broken' || !worker) return false;
+        workerPending.set(id, true);
+        const job = { id, bytes, filename, options };
+        if (workerState === 'ready') postRun(job); else workerWaiting.push(job);
+        return true;
+      };
+      window.sigWorkerState = () => workerState;
+
+      // Loading a capture. A .wav, or a raw capture up to WHOLE_LIMIT, is read whole. A bigger
+      // raw capture is never read whole: only one WINDOW-sized slice (Blob.slice) goes into the
+      // WASM module, and "Previous/Next window" re-read another slice, so memory is bounded by
+      // the window, not the file. (128 MiB = 16M complex float32 samples, the analysis window.)
+      const WHOLE_LIMIT = 128 * 1024 * 1024;
+      const WINDOW = 128 * 1024 * 1024;   // a multiple of 8, so every slice stays sample-aligned
+      let streamed = null;                // { file, start } while a big file is being stepped through
+      const openSlice = async (file, start) => {
+        const length = Math.min(WINDOW, file.size - start);
+        const bytes = new Uint8Array(await file.slice(start, start + length).arrayBuffer());
+        streamed = { file, start };
+        app.sigAppOpenWindow(bytes, file.name, file.size, start);
+      };
+      window.sigLoadCapture = async (file) => {
+        if (/\.wav$/i.test(file.name) || file.size <= WHOLE_LIMIT) {
+          streamed = null;
+          app.sigAppOpenFile(new Uint8Array(await file.arrayBuffer()), file.name);
+        } else {
+          await openSlice(file, 0);
+        }
+      };
+      window.sigStepWindow = async (direction) => {
+        if (!streamed) return;
+        const last = Math.max(0, Math.floor((streamed.file.size - 1) / WINDOW) * WINDOW);
+        const start = Math.min(last, Math.max(0, streamed.start + direction * WINDOW));
+        if (start === streamed.start) return;
+        try { await openSlice(streamed.file, start); } catch (err) { console.error('could not load the next window', err); }
+      };
+
       // Drag-and-drop: the same path as "Open File...", from the page.
       let depth = 0;
       addEventListener('dragenter', (e) => { if (e.dataTransfer?.types?.includes('Files')) { depth++; drop.style.display = 'flex'; e.preventDefault(); } });
@@ -133,7 +209,7 @@
         const file = e.dataTransfer?.files?.[0];
         if (!file) return;
         try {
-          app.sigAppOpenFile(new Uint8Array(await file.arrayBuffer()), file.name);
+          await window.sigLoadCapture(file);
         } catch (err) {
           console.error('could not load the dropped file', err);
         }

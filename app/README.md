@@ -46,12 +46,13 @@ onnxruntime-web through the bridge), `wasm_file_picker` (the `<input type="file"
 
 ## Performance
 
-In headless Chrome (single-threaded WASM), from load to the finished display: a 512-sample capture
+In headless Chrome (single-threaded WASM), from load to the finished display, measured BEFORE the
+gap-list work (automatic searches, 16M-sample window) and not re-measured since: a 512-sample capture
 ~70 ms including the ML inference; 500,000 samples ~0.2 s; a 64 MB capture (8M samples) ~0.2 to 1.4 s;
 512 MB (64M samples) ~2 s; 768 MB does not fit in memory and is reported as "out of memory" without
-crashing. The pipeline runs on the UI thread; at these sizes that does not block noticeably. If much
-larger captures matter, the plan from `CLAUDE.md` applies (a Web Worker running a second WASM
-instance), not in-module threads.
+crashing. (Those timings were with the pipeline on the UI thread. It now runs in a Web Worker, a
+second WASM instance -- see BUILDING.md -- so the UI stays responsive however long it takes; the
+timings themselves have not been re-measured.)
 
 Two things made large captures usable, both found by measuring (not assumed): the results panel
 shows at most 10,000 characters of the decoded message (Qt's layout of a 2 MB line took 220 s), and

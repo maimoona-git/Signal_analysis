@@ -123,7 +123,7 @@ std::vector<std::complex<float>> integrate_and_dump(const std::vector<std::compl
 }  // namespace
 
 RecoveryResult recover_linear(const std::vector<std::complex<float>>& raw, unsigned int sps,
-                              ModulationScheme scheme, PulseShape pulse) {
+                              ModulationScheme scheme, PulseShape pulse, float rolloff_factor) {
     if (raw.empty()) {
         throw std::runtime_error("recover_linear: samples is empty");
     }
@@ -149,7 +149,7 @@ RecoveryResult recover_linear(const std::vector<std::complex<float>>& raw, unsig
     std::vector<std::complex<float>> timed;
     if (pulse == PulseShape::Rrc) {
         const unsigned int delay_symbols = 3;
-        const float rolloff = 0.35f;
+        const float rolloff = rolloff_factor;
         const unsigned int num_filters = 32;
         symsync_crcf sync = symsync_crcf_create_rnyquist(LIQUID_FIRFILT_RRC, sps, delay_symbols, rolloff, num_filters);
         symsync_crcf_set_lf_bw(sync, 0.01f);

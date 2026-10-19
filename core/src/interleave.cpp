@@ -1,6 +1,7 @@
 #include "interleave.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <deque>
 #include <numeric>
 #include <random>
@@ -91,11 +92,86 @@ std::vector<T> diagonal_deinterleave_t(const std::vector<T>& bits, unsigned int 
     return out;
 }
 
+// floor(log2(x)) for x >= 1. A plain loop, not a compiler intrinsic
+// (__builtin_clzll etc.): the whole point of this file is portability, so this
+// avoids depending on yet another thing that is really a GCC/Clang extension,
+// not standard C++. Cheap regardless -- called once per swap below, not a hot
+// path at interleaver-setup time.
+unsigned int floor_log2(uint64_t x) {
+    unsigned int w = 0;
+    while ((x >> (w + 1)) != 0) ++w;
+    return w;
+}
+
+// Draws one uniformly-distributed index in [0, d] from raw std::mt19937 output,
+// bit-for-bit reproducing what libc++'s std::shuffle(std::mt19937) actually
+// computes internally (uniform_int_distribution<ptrdiff_t>(0, d), by way of its
+// own __independent_bits_engine) -- see make_permutation's own comment for why
+// matching libc++ specifically, not implementing shuffle some other equally
+// valid way, is the point here.
+//
+// Traced directly from libc++'s own headers (__algorithm/shuffle.h,
+// __random/uniform_int_distribution.h), not reconstructed from memory: for a
+// 32-bit engine (mt19937's result_type) and a 64-bit working type (ptrdiff_t's
+// unsigned counterpart, which is what this range ends up promoted to), the
+// range size [0, d] always has exactly one "digit group" in libc++'s own
+// generic bit-packing engine (true for any d small enough that log2(d+1) <=
+// 32, i.e. any array size this project will ever actually interleave) -- which
+// collapses that otherwise fairly general machinery down to exactly this: one
+// raw engine draw, masked to the smallest number of bits that can represent
+// every value in [0, d], retried on rejection (the draw lands in the part of
+// that bit range that would overrepresent small values) until it lands inside
+// [0, d] itself. Verified empirically against the real std::shuffle +
+// std::mt19937 across sizes 0..4096 (every edge case around a power of two,
+// where the retry logic actually matters) and several seeds, bit for bit.
+unsigned int uniform_index(std::mt19937& rng, unsigned int d) {
+    // d == 0: libc++'s uniform_int_distribution<ptrdiff_t>(0, 0) takes its
+    // "only one possible value" fast path and returns 0 without drawing
+    // anything at all -- not drawing here either keeps every later draw in
+    // the same position in the mt19937 sequence as the original.
+    if (d == 0) return 0;
+    const uint64_t range_size = static_cast<uint64_t>(d) + 1;  // number of valid values in [0, d]
+    unsigned int w = floor_log2(range_size);
+    // range_size is not itself an exact power of two: one more bit is needed
+    // to cover its own top value (e.g. range_size=9 needs 4 bits, not 3).
+    if ((range_size & ((~0ULL) >> (64 - w))) != 0) ++w;
+    const uint32_t mask = (w >= 32) ? 0xFFFFFFFFu : ((1u << w) - 1u);
+    uint32_t draw;
+    do {
+        draw = rng() & mask;
+    } while (draw >= range_size);
+    return static_cast<unsigned int>(draw);
+}
+
+// A platform-independent reimplementation of std::shuffle(std::mt19937).
+// std::mt19937 itself is fully specified by the standard (a fixed recurrence),
+// so seeding it and drawing raw 32-bit values from it is already portable; it
+// is std::shuffle's own index-mapping algorithm (by way of
+// std::uniform_int_distribution) that the standard leaves unspecified --
+// confirmed directly: built natively on this project with g++/libstdc++
+// instead of Clang/libc++, the SAME seed produced a DIFFERENT permutation,
+// which is exactly how two analysts' own builds of this tool could disagree on
+// a pseudo-random-interleaved capture's decoded message, contradicting the
+// "identical results for every analyst" claim.
+//
+// This reproduces libc++'s own specific algorithm (uniform_index above) bit
+// for bit, chosen deliberately because that is what this project's existing
+// golden fixtures -- recorded on this project's own native (Clang/libc++) and
+// WASM (Emscripten, also libc++) builds, the only two platforms this was ever
+// actually run on before -- already match, so this changes nothing about
+// today's already-passing behavior while making it the same on every
+// platform, not just these two.
 std::vector<unsigned int> make_permutation(size_t n, unsigned int seed) {
     std::vector<unsigned int> perm(n);
     std::iota(perm.begin(), perm.end(), 0u);
     std::mt19937 rng(seed);
-    std::shuffle(perm.begin(), perm.end(), rng);
+    if (n > 1) {
+        for (size_t k = 0; k + 1 < n; ++k) {
+            const unsigned int d = static_cast<unsigned int>(n - 1 - k);
+            const unsigned int i = uniform_index(rng, d);
+            if (i != 0) std::swap(perm[k], perm[k + i]);
+        }
+    }
     return perm;
 }
 

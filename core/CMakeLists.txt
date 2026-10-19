@@ -9,6 +9,9 @@ set(SIGCORE_PORTABLE_SOURCES
   src/wav_io.cpp
   src/ingest.cpp
   src/iq_io.cpp
+  src/sigmf_meta.cpp
+  src/fsk_estimate.cpp
+  src/fec_extra.cpp
   src/interleave.cpp
   src/gf256.cpp
   src/reed_solomon.cpp

@@ -133,7 +133,7 @@ describe('the Qt-WASM app in real Chrome', () => {
     assert.equal(s.waterfall.hasData, false);
     assert.equal(s.constellation.points, 0);
     assert.equal(s.samplesPerSymbol, 1);
-    assert.equal(s.autoDetect, false);
+    assert.equal(s.autoDetect, true);   // gap-list Phase 1.2: on by default
     assert.equal(s.sampleRateText, '');
     assert.ok(s.window.width >= 1000 && s.window.height >= 600, 'the window fills the page');
     assert.equal(await page.evaluate(() => self.crossOriginIsolated), false, 'served without COOP/COEP (single-threaded build)');
@@ -156,8 +156,7 @@ describe('the Qt-WASM app in real Chrome', () => {
     await page.keyboard.press('End');
     for (let i = 0; i < 3; i++) await page.keyboard.press('Backspace');
     await page.keyboard.type('4');
-    await click(s.controls.autoDetect);
-    s = await state();
+    s = await state();                  // auto-detect is already on by default
     assert.equal(s.sampleRateText, '8000');
     assert.equal(s.samplesPerSymbol, 4);
     assert.equal(s.autoDetect, true);
@@ -167,9 +166,13 @@ describe('the Qt-WASM app in real Chrome', () => {
     s = await waitFor('the analysis', (x) => x.status.startsWith('Done.') || x.status === 'Analysis failed.');
     console.log(`         analysis of a 512-sample capture with the real model: ${Date.now() - t0} ms (incl. first-run model load)`);
 
+    // The panel is no longer byte-for-byte the original's (gap-list Phase 1-2: decode status,
+    // sources, automatic Parameter Search and pulse-shape search): this capture, which the
+    // original's auto-detect missed, now decodes and is reported as verified.
     const original = record('demo_ldpc_block_autodetect');
-    assert.equal(s.status, fromHex(original.status_hex));                    // "Done. Predicted modulation: bpsk (100% confidence)."
-    assert.equal(s.resultText, fromHex(original.panel_text_hex));           // byte for byte what the original GUI showed
+    assert.equal(s.status, 'Done. Predicted modulation: bpsk (100% confidence). Decoded message verified.');
+    assert.match(s.resultText, /Decoded message \(verified\):      'SIH2026!'/);
+    assert.match(s.resultText, /Detected FEC:         ldpc/);
     assert.equal(s.waterfall.hasData, true);
     assert.equal(s.waterfall.frames, Number(original.spec_frames));
     assert.equal(s.waterfall.nfft, Number(original.spec_nfft));
@@ -219,11 +222,113 @@ describe('the Qt-WASM app in real Chrome', () => {
 
     await click(s.controls.run);
     s = await waitFor('the analysis', (x) => x.status.startsWith('Done.') || x.status === 'Analysis failed.');
-    const original = record('demo_fsk_plain_real');
-    assert.equal(s.resultText, fromHex(original.panel_text_hex));
-    assert.equal(s.status, fromHex(original.status_hex));
-    assert.match(s.resultText, /Decoded message:      'SIH2026!'/);
+    // a single, non-repeating message with no FEC: nothing verifies it, and the panel now says so
+    assert.match(s.resultText, /Raw bits \(unverified\):      'SIH2026!'/);
+    assert.equal(s.status, 'Done. Predicted modulation: fsk (100% confidence). No verified decode.');
     await shot('4-analysed-fsk');
+  });
+
+  it('every demo capture decodes to its documented message in the real app', async () => {
+    // demo/README.md's five captures, through the real GUI defaults (auto-detect on, sample rate 8000
+    // typed once above): the three that need Parameter Search are now found automatically.
+    const demos = [
+      ['intercept_alpha.wav', 'OPERATION NIGHTFALL CONFIRMED'],
+      ['intercept_bravo.iq', 'COORDINATES RECEIVED HOLD POSITION'],
+      ['intercept_charlie.iq', 'SIGNAL INTERCEPT VERIFIED DELTA STATION'],
+      ['intercept_delta.iq', 'HOLD POSITION AT POINT ZULU'],
+      ['intercept_echo.iq', 'MAINTAIN RADIO SILENCE NOW'],
+    ];
+    let st = await state();
+    if (!st.autoDetect) await click(st.controls.autoDetect);   // the previous test left it off
+    assert.equal((await state()).autoDetect, true);
+    for (const [file, message] of demos) {
+      const b64 = fs.readFileSync(path.join(root, 'demo', file)).toString('base64');
+      await page.evaluate((b, name) => window.sigApp.sigAppOpenFile(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)), name), b64, file);
+      let s = await waitFor(`${file} to load`, (x) => x.filename === file);
+      await click(s.controls.run);
+      s = await waitFor(`${file} analysis`, (x) => x.status.startsWith('Done.') || x.status === 'Analysis failed.', 60000);
+      assert.ok(s.status.startsWith('Done.'), `${file}: ${s.status}`);
+      assert.ok(s.resultText.includes(message), `${file}: expected "${message}" in:\n${s.resultText}`);
+    }
+  });
+
+  it('the page stays responsive while a long analysis runs in the worker', async () => {
+    // Noise with auto-detect on makes every automatic search run until its 5 s time budget. Before
+    // the analysis worker that froze the page for the duration; now state queries (which need the
+    // page's main thread, and so the Qt event loop) must keep answering promptly all the while.
+    let st = await state();
+    if (!st.autoDetect) await click(st.controls.autoDetect);
+    await page.evaluate(() => {
+      const n = 40000, f = new Float32Array(2 * n);
+      let seed = 99;
+      const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296) * 2 - 1;
+      for (let i = 0; i < f.length; i++) f[i] = rnd();
+      window.sigApp.sigAppOpenFile(new Uint8Array(f.buffer), 'noise.iq');
+    });
+    st = await waitFor('the noise file', (x) => x.filename === 'noise.iq');
+    assert.equal(await page.evaluate(() => window.sigWorkerState()), 'ready', 'the analysis worker is running');
+    const t0 = Date.now();
+    await click(st.controls.run);
+    let worst = 0, polls = 0, sawRunning = false;
+    for (;;) {
+      const t = Date.now();
+      st = await state();
+      worst = Math.max(worst, Date.now() - t);
+      polls++;
+      if (st.running) sawRunning = true;
+      if (st.status.startsWith('Done.') || st.status === 'Analysis failed.') break;
+      assert.ok(Date.now() - t0 < 120000, 'the analysis did not finish');
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const total = Date.now() - t0;
+    console.log(`         noise analysis ${total} ms; ${polls} state polls while it ran, slowest ${worst} ms`);
+    assert.ok(sawRunning, 'the window reported it was running');
+    assert.ok(total > 1500, `the analysis was long enough to prove something (${total} ms)`);
+    assert.ok(worst < 1000, `the page answered within 1 s at all times (slowest ${worst} ms)`);
+  });
+
+  it('a capture bigger than the window is read in slices and can be stepped through', async () => {
+    // 300 MB of cf32: three 128 MiB windows. Only one slice is ever read into the page.
+    const os = await import('node:os');
+    const big = path.join(os.tmpdir(), `sig-streaming-${process.pid}.iq`);
+    const total = 300 * 1024 * 1024, window = 128 * 1024 * 1024;
+    const fd = fs.openSync(big, 'w');
+    try {
+      // A flat DC capture, (1, 0) float samples: all-zero bytes would be genuinely ambiguous for the
+      // sample-format guess (zeros are zeros in every format), and no real capture is all zeros.
+      const chunk = Buffer.alloc(1024 * 1024);
+      for (let i = 0; i < chunk.length; i += 8) chunk.writeFloatLE(1.0, i);
+      for (let off = 0; off < total; off += chunk.length) fs.writeSync(fd, chunk, 0, Math.min(chunk.length, total - off), off);
+      // The SECOND window gets a 1000 Hz tone (8 samples per period, so every 1 MiB chunk joins
+      // seamlessly) instead: its strongest-signal line proves the slice came from the right place.
+      const tone = Buffer.alloc(1024 * 1024);
+      for (let i = 0; i < tone.length / 8; i++) {
+        tone.writeFloatLE(Math.cos(2 * Math.PI * i / 8), 8 * i);
+        tone.writeFloatLE(Math.sin(2 * Math.PI * i / 8), 8 * i + 4);
+      }
+      for (let off = window; off < 2 * window; off += tone.length) fs.writeSync(fd, tone, 0, tone.length, off);
+      let s = await state();
+      const [chooser] = await Promise.all([page.waitForFileChooser({ timeout: 10000 }), click(s.controls.open)]);
+      await chooser.accept([big]);
+      s = await waitFor('the big file', (x) => x.filename.startsWith('sig-streaming-'), 120000);
+      assert.equal(s.nextWindowEnabled, true);
+      assert.equal(s.previousWindowEnabled, false);
+      await click(s.controls.run);
+      s = await waitFor('window 1', (x) => x.status.startsWith('Done.') || x.status === 'Analysis failed.', 120000);
+      assert.ok(s.status.startsWith('Done.'), s.status);
+      assert.match(s.resultText, new RegExp(`Analysed window:      samples 0 to 16777216 of ${total / 8}`));
+
+      await click(s.controls.nextWindow);
+      s = await waitFor('window 2 to load', (x) => x.previousWindowEnabled === true && x.status.startsWith('Loaded'), 120000);
+      await click(s.controls.run);
+      s = await waitFor('window 2', (x) => x.status.startsWith('Done.') || x.status === 'Analysis failed.', 120000);
+      assert.match(s.resultText, new RegExp(`Analysed window:      samples 16777216 to 33554432 of ${total / 8}`));
+      const hz = Number(/Strongest signal:\s+(-?\d+(?:\.\d+)?) Hz/.exec(s.resultText)?.[1]);
+      assert.ok(Math.abs(hz - 1000) < 100, `window 2 should show the 1000 Hz tone, strongest signal at ${hz} Hz`);
+    } finally {
+      fs.closeSync(fd);
+      fs.rmSync(big, { force: true });
+    }
   });
 
   it('a file the pipeline rejects is reported in the panel, the status bar and a dialog', async () => {
@@ -325,7 +430,7 @@ describe('the Qt-WASM app in real Chrome', () => {
     assert.ok(s.status.startsWith('Done.'), s.status);
     assert.match(s.resultText, /Num samples:          8000000/);
     assert.ok(s.resultText.length < 20000, `the panel text is bounded (${s.resultText.length} characters)`);
-    assert.match(s.resultText, /characters in all, the first 10000 shown|Decoded message:/);
+    assert.match(s.resultText, /characters in all, the first 10000 shown|Decoded message|Raw bits/);
     assert.ok(ms < 30000, `took ${ms} ms`);
   });
 
@@ -365,8 +470,42 @@ describe('served from a sub-path, as a GitHub Pages project site or any reverse 
       await new Promise((r) => setTimeout(r, 100));
     }
     assert.ok(s.status.startsWith('Done.'), s.status);
-    assert.match(s.resultText, /Decoded message:      'SIH2026!'/);
+    assert.match(s.resultText, /'SIH2026!'/);   // under whichever honest label (verified/structured/raw) applies
     assert.deepEqual(failures, []);                                          // nothing 404'd
+  });
+});
+
+describe('when the analysis worker cannot start, the app still analyses in its own module', () => {
+  let server, browser, page;
+  before(async () => {
+    server = await serve(dist);
+    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-gpu'], defaultViewport: { width: 1400, height: 800 } });
+    page = await browser.newPage();
+    await page.setRequestInterception(true);
+    page.on('request', (req) => (/analysis-worker\.js$/.test(req.url()) ? req.respond({ status: 404, body: 'not found' }) : req.continue()));
+    page.on('pageerror', () => {});
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await page.waitForFunction(() => window.sigApp && window.sigApp.sigAppState().window, { timeout: 90000 });
+  });
+  after(async () => { await browser?.close(); server?.close(); });
+
+  it('falls back to running in the page', async () => {
+    const state = () => page.evaluate(() => JSON.parse(JSON.stringify(window.sigApp.sigAppState())));
+    await page.waitForFunction(() => window.sigWorkerState() === 'broken', { timeout: 20000 });
+    await page.evaluate((b64) => window.sigApp.sigAppOpenFile(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)), 'fsk_plain.iq'),
+      fs.readFileSync(path.join(dataDir, 'fsk_plain.iq')).toString('base64'));
+    let s = await state();
+    await page.mouse.click(s.controls.sampleRate.x, s.controls.sampleRate.y);
+    await page.keyboard.type('8000');
+    s = await state();
+    await page.mouse.click(s.controls.run.x, s.controls.run.y);
+    for (let i = 0; i < 600; i++) {
+      s = await state();
+      if (s.status.startsWith('Done.') || s.status === 'Analysis failed.') break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.ok(s.status.startsWith('Done.'), s.status);
+    assert.match(s.resultText, /'SIH2026!'/);
   });
 });
 

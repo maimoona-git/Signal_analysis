@@ -11,12 +11,14 @@ add_library(sigpipeline STATIC
   src/demod_dispatch.cpp
   src/interleave_dispatch.cpp
   src/fec_dispatch.cpp
+  src/fec_registry.cpp
   src/correlate.cpp
   src/detect.cpp
   src/raster.cpp
   src/rank_analysis.cpp
   src/param_search.cpp
   src/pipeline.cpp
+  src/pipeline_io.cpp
   src/result_text.cpp
 )
 target_include_directories(sigpipeline PUBLIC include)

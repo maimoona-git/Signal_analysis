@@ -1,5 +1,6 @@
 #include "pipeline_bridge.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <stdexcept>
 
@@ -23,8 +24,20 @@ void run_pipeline_async(const uint8_t* data, size_t size, const std::string& fil
             }
             std::shared_ptr<const sigapp::PipelineResult> result;
             try {
+                // Gap-list Phase 2.2: hand over the runner-up labels (top 3 overall), not
+                // just the top one, so pipeline_finish can retry them.
+                sigapp::Classification classification{ml.label, ml.confidence, {}};
+                std::vector<std::size_t> order(ml.probabilities.size());
+                for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+                std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+                    return ml.probabilities[a] > ml.probabilities[b];
+                });
+                for (std::size_t k = 0; k < order.size() && classification.alternatives.size() < 2; ++k) {
+                    if (order[k] == ml.top_index) continue;
+                    classification.alternatives.push_back({ml.classes[order[k]], ml.probabilities[order[k]], {}});
+                }
                 result = std::make_shared<const sigapp::PipelineResult>(
-                    sigapp::pipeline_finish(std::move(*prep), sigapp::Classification{ml.label, ml.confidence}, options));
+                    sigapp::pipeline_finish(std::move(*prep), classification, options));
             } catch (const std::exception& e) {
                 done(false, nullptr, describe_exception(e));
                 return;

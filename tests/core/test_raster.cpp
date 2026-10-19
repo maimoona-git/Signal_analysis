@@ -80,6 +80,21 @@ TEST_CASE("finds the frame length, sync word, and counter field on a clean frame
     }
 }
 
+TEST_CASE("a long capture still finds the true frame length, not a partial sync-word overlap") {
+    // The same layout as above, but 256 frames instead of 40. A longer stream lowers the
+    // noise floor (~1/sqrt(n)) below the small, real correlation a sync word has with a
+    // shifted copy of itself; a "smallest lag over the floor" rule then picked such a lag
+    // (a 6-bit "frame" here) instead of the true 32.
+    const Bits header = {1, 0, 1, 1, 0, 0, 1, 0};
+    const auto bits = concat(make_frames(header, 4, 32, 256, 7));
+
+    const auto raster = build_frame_raster(bits);
+    CHECK(raster.detected);
+    CHECK(raster.frame_length == 32);
+    CHECK(raster.num_frames == 256);
+    CHECK(raster.sync_word == header);
+}
+
 TEST_CASE("with no counter field, nothing after the sync word is mislabelled counter-like") {
     // The first column after the sync word here is real random payload, whose expected
     // transition rate (~0.5) is exactly what a counter's second bit would also show --

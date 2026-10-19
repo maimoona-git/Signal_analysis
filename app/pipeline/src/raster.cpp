@@ -29,42 +29,51 @@ double min_peak_value(size_t n) {
     return std::max(0.05, 5.0 / std::sqrt(static_cast<double>(std::max<size_t>(n, 1))));
 }
 
-// The smallest lag with a statistically real autocorrelation peak in
-// [min_period, max_period]: the fundamental period, not one of its harmonics (which
-// also correlate strongly).
+// The fundamental frame period in [min_period, max_period]: the strongest
+// autocorrelation peak is the frame length or one of its harmonics, so the answer is
+// the smallest DIVISOR of that strongest lag that is itself a real peak.
 //
-// A peak only has to clear the absolute noise floor, not some fraction of the
-// strongest peak found anywhere in the range. That second, relative test looks like a
-// reasonable extra safeguard, but it isn't: a header field that changes every frame
-// (a frame counter's own LSB) actively *decorrelates* the stream at exactly the true
-// period (adjacent frames are guaranteed to differ there) while *correlating* at even
-// multiples of it (two frames on, the LSB has flipped twice and matches again) --
-// measured on a synthetic counter-bearing stream, this can make a harmonic (e.g. 2x
-// or 4x the real length) genuinely stronger than the fundamental. Requiring the
-// fundamental to match a fraction of that inflated harmonic then rejects the very
-// peak this function exists to find. The absolute floor already keeps this from
-// picking up noise; a real signal's own weaker fundamental deserves to still win it.
+// Why not simply "the smallest lag that clears the noise floor": a frame's fixed bits
+// (its sync word) partly overlap themselves at small lags, which gives those lags a
+// small but real correlation of about (overlapping fixed bits) / (frame length). That
+// does not shrink with capture length, while the noise floor does (~1/sqrt(n)), so on
+// a long capture a partial sync-word overlap clears the floor first and wins (measured:
+// 256 frames of 32 bits reported a 6-bit frame). Such a lag is essentially never a
+// divisor of the true period, so restricting the search to divisors removes it.
+//
+// Why the divisor only has to reach a fraction of the strongest peak, not match it: a
+// header field that changes every frame (a frame counter's own LSB) actively
+// *decorrelates* the stream at exactly the true period while *correlating* at even
+// multiples of it, so a harmonic (2x, 4x) can be genuinely stronger than the
+// fundamental. The fraction is loose enough to keep that weaker fundamental, and still
+// rejects a small divisor lag that only a partial sync-word overlap lifts over the floor.
+constexpr double kFundamentalFraction = 0.25;
+
 std::optional<unsigned> pick_frame_length(const std::vector<double>& corr, unsigned min_period,
                                           unsigned max_period, const std::vector<unsigned>& preferred) {
     const double min_peak = min_peak_value(corr.size() + 1);  // corr has n - 1 entries
     double best_in_range = -2.0;
-    for (unsigned lag = min_period; lag <= max_period; ++lag) best_in_range = std::max(best_in_range, value_at(corr, lag));
+    unsigned best_lag = 0;
+    for (unsigned lag = min_period; lag <= max_period; ++lag) {
+        const double v = value_at(corr, lag);
+        if (v > best_in_range) {  // strict: ties keep the smaller lag
+            best_in_range = v;
+            best_lag = lag;
+        }
+    }
     if (best_in_range < min_peak) return std::nullopt;  // nothing periodic here
 
     for (unsigned lag : preferred) {
         if (lag >= min_period && lag <= max_period && value_at(corr, lag) >= min_peak) return lag;
     }
-    for (unsigned lag = min_period; lag <= max_period; ++lag) {
+    const double needed = std::max(min_peak, kFundamentalFraction * best_in_range);
+    for (unsigned lag = min_period; lag < best_lag; ++lag) {
+        if (best_lag % lag != 0) continue;
         const double v = value_at(corr, lag);
-        if (v < min_peak) continue;
+        if (v < needed) continue;
         if (v >= value_at(corr, lag - 1) && v >= value_at(corr, lag + 1)) return lag;  // a local maximum
     }
-    // No clean local maximum cleared the floor (e.g. very few repeats): fall back to
-    // the single strongest lag in range.
-    for (unsigned lag = min_period; lag <= max_period; ++lag) {
-        if (value_at(corr, lag) == best_in_range) return lag;
-    }
-    return std::nullopt;
+    return best_lag;
 }
 
 // Labels the counter field, if any, right after the leading Constant run. A single

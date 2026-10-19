@@ -43,6 +43,14 @@ std::vector<std::complex<float>> modulate(const Bits& bits, const std::string& s
 Bits demodulate(const std::vector<std::complex<float>>& samples, const std::string& scheme,
                 const DemodParams& params) {
     if (lower(scheme) == "fsk") {
+        // A real capture is almost never a whole number of symbols long (found with a real GPS
+        // recording, which failed here with "samples length must be a multiple of sps"): drop
+        // the trailing partial symbol instead of rejecting the whole file.
+        const size_t sps = std::max<unsigned int>(1, params.samples_per_symbol);
+        if (samples.size() % sps != 0) {
+            const std::vector<std::complex<float>> whole(samples.begin(), samples.end() - static_cast<long>(samples.size() % sps));
+            return sigcore::fsk_demodulate(whole, params.bits_per_symbol, params.samples_per_symbol, params.bandwidth);
+        }
         return sigcore::fsk_demodulate(samples, params.bits_per_symbol, params.samples_per_symbol, params.bandwidth);
     }
     return sigcore::linear_demodulate(samples, linear_scheme_from_name(scheme));

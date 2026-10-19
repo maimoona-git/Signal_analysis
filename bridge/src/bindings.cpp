@@ -25,6 +25,7 @@
 #include "ml_bridge.hpp"
 #include "param_search.hpp"
 #include "pipeline_bridge.hpp"
+#include "pipeline_io.hpp"
 
 using emscripten::val;
 using sigbridge::bytes_from_js;
@@ -491,9 +492,45 @@ void run_pipeline(val bytes, std::string filename, val options_js, val callback)
     throw_js_error(error);
 }
 
+// Gap-list Phase 4 (Web Worker): the same pipeline, but options come in and the result goes out
+// as the binary wire format of app/pipeline/pipeline_io.hpp -- what the analysis worker calls so
+// the Qt app (another WASM instance, on the page's main thread) can take the result without
+// either side translating a JS object field by field. callback(error, Uint8Array).
+void run_pipeline_binary(val bytes, std::string filename, val options_blob, val callback) {
+    std::string error;
+    try {
+        const std::vector<uint8_t> data = bytes_from_js(bytes);
+        const std::vector<uint8_t> opt_bytes = bytes_from_js(options_blob);
+        const sigapp::PipelineOptions options = sigapp::deserialize_options(opt_bytes.data(), opt_bytes.size());
+        sigbridge::run_pipeline_async(
+            data.data(), data.size(), filename, options,
+            [callback](bool ok, std::shared_ptr<const sigapp::PipelineResult> result, const std::string& message) {
+                if (!ok) {
+                    callback(val::global("Error").new_(message), val::null());
+                    return;
+                }
+                std::vector<uint8_t> blob;
+                try {
+                    blob = sigapp::serialize_result(*result);
+                } catch (const std::exception& e) {
+                    callback(val::global("Error").new_(describe_exception(e)), val::null());
+                    return;
+                }
+                // slice() copies out of WASM memory, so the JS side owns (and can transfer) it
+                const val view(emscripten::typed_memory_view(blob.size(), blob.data()));
+                callback(val::null(), view.call<val>("slice"));
+            });
+        return;
+    } catch (const std::exception& e) {
+        error = describe_exception(e);
+    }
+    throw_js_error(error);
+}
+
 }  // namespace
 
 EMSCRIPTEN_BINDINGS(sig_bridge) {
+    emscripten::function("runPipelineBinary", &run_pipeline_binary);
     emscripten::function("ingestFile", &ingest_file);
     emscripten::function("classifySpectrogram", &classify_spectrogram);
     emscripten::function("classifyCapture", &classify_capture);

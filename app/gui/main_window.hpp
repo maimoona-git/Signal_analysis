@@ -54,6 +54,22 @@ public:
     // <input type="file"> picker (gui/wasm_file_picker.hpp), which behaves the same in
     // every browser (Qt's own uses the Chromium-only File System Access picker).
     void setFilePicker(std::function<void()> picker) { file_picker_ = std::move(picker); }
+    // Gap-list Phase 2.9: "Export Result...". The saver receives a suggested file name and
+    // the bytes; the default (no saver set) is QFileDialog::saveFileContent, the browser
+    // download. Exports the last finished analysis as JSON; a no-op before one exists.
+    void setFileSaver(std::function<void(const QString&, const QByteArray&)> saver) { file_saver_ = std::move(saver); }
+    void exportResult();
+    QAction* exportAction() const { return export_action_; }
+    bool hasSigmfMeta() const { return sigmf_meta_json_.has_value(); }
+
+    // Gap-list Phase 4 (streaming): for a file too big to hold, the page reads one slice and
+    // hands in just those bytes; this records where the slice sits in the real file and
+    // enables "Previous/Next window", which call the stepper (the page re-reads another
+    // slice and loads it). Not calling it (or loading a new file) means "whole file".
+    void setStreamInfo(quint64 total_bytes, quint64 start_byte, quint64 window_bytes);
+    void setWindowStepper(std::function<void(int)> stepper) { window_stepper_ = std::move(stepper); }
+    QAction* previousWindowAction() const { return prev_window_action_; }
+    QAction* nextWindowAction() const { return next_window_action_; }
     // What opening a file does once its bytes are in hand (also the drag-and-drop path).
     void loadFile(const QString& filename, const QByteArray& bytes);
     // "Run Analysis" on the loaded file, with the toolbar's settings.
@@ -90,6 +106,7 @@ public:
     // should assume ("rrc" or "rect" -- see QComboBox::currentData()). Only matters
     // when recover timing is on.
     QComboBox* pulseShapeComboBox() const { return pulse_shape_; }
+    QComboBox* modulationOverrideComboBox() const { return modulation_override_; }
     // Real-world signal support: blind wideband channel detection -- see
     // sigcore::find_channels's own comment. Unlike recoverTiming/pulseShape (which
     // only change how demodulation runs), turning this on and picking a channel
@@ -156,6 +173,13 @@ private:
 
     AnalysisBackend* backend_;
     std::function<void()> file_picker_;
+    std::function<void(int)> window_stepper_;
+    QAction* prev_window_action_ = nullptr;
+    QAction* next_window_action_ = nullptr;
+    quint64 stream_total_bytes_ = 0, stream_start_byte_ = 0, stream_window_bytes_ = 0;
+    void updateWindowActions();
+    std::function<void(const QString&, const QByteArray&)> file_saver_;
+    QAction* export_action_ = nullptr;
 
     WaterfallWidget* waterfall_ = nullptr;
     ConstellationWidget* constellation_ = nullptr;
@@ -180,6 +204,7 @@ private:
     QCheckBox* soft_decoding_ = nullptr;
     QCheckBox* recover_timing_ = nullptr;
     QComboBox* pulse_shape_ = nullptr;
+    QComboBox* modulation_override_ = nullptr;
     QCheckBox* find_channels_ = nullptr;
     QTableWidget* channel_table_ = nullptr;
     QPushButton* extract_channel_button_ = nullptr;
@@ -191,6 +216,11 @@ private:
     QPushButton* color_range_auto_button_ = nullptr;
     QLineEdit* sample_rate_ = nullptr;
     QSpinBox* samples_per_symbol_ = nullptr;
+    std::optional<std::string> sigmf_meta_json_;  // Gap-list Phase 2.6: a loaded .sigmf-meta sidecar
+    std::optional<double> fractional_sps_;  // Gap-list Phase 2.4: a non-integer estimate in use
+    bool sps_user_set_ = false;  // Gap-list Phase 1.2: has the user typed a samples/symbol value
+                                  // for this file, as opposed to it only being set by the
+                                  // auto-apply below -- reset on each new file load.
     QLabel* symbol_rate_suggestion_ = nullptr;
     QComboBox* iq_format_ = nullptr;
 

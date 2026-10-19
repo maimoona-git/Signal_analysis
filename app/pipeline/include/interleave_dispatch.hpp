@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "bits.hpp"
 #include "soft_demod.hpp"  // sigcore::LLRBuffer
@@ -44,5 +45,13 @@ Bits deinterleave(const Bits& bits, const InterleaverSpec& spec);
 // this moves confidences through exactly the same positions the bit version would.
 sigcore::LLRBuffer interleave(const sigcore::LLRBuffer& llrs, const InterleaverSpec& spec);
 sigcore::LLRBuffer deinterleave(const sigcore::LLRBuffer& llrs, const InterleaverSpec& spec);
+
+// Gap-list Phase 5: THE list of interleaver hypotheses for a stream of `n` bits, shared by
+// detect_params and Parameter Search (each used to carry its own identical copy): the
+// identity (nullopt) first, then block and diagonal over every divisor pair with both sides
+// <= 256 and aspect ratio <= 8, convolutional for 2..8 branches x delay 1..4 (when it fits
+// the stream), and `seed_range` pseudo-random seeds. The ORDER is part of the contract --
+// detect_params' tie-breaks depend on it.
+std::vector<std::optional<InterleaverSpec>> interleaver_candidates(size_t n, unsigned int seed_range);
 
 }  // namespace sigapp

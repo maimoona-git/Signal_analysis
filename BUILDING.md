@@ -99,8 +99,8 @@ scripts/browser-smoke.sh           # headless Chrome: full chain on 11 fixtures 
 ```
 
 `ctest` also runs `tests/bridge/onnx.test.mjs` (real model + real bridge under
-node). The ORT runtime is served from the app's own origin (no CDN, works
-offline) and is 14 MB, by far the largest asset. To regenerate the model or the
+node). The ORT runtime is served from the app's own origin (no CDN, so no third-party
+requests; it still needs the host to serve it) and is 14 MB, by far the largest asset. To regenerate the model or the
 fixtures see `ml/README.md`.
 
 The pipeline port (`app/pipeline/`, see its README) is tested against 600+ cases
@@ -157,8 +157,9 @@ prebuilt libraries, so `-O2` is kept. Let the host compress (any does); the app 
 ### Limits
 
 The browser holds a capture, its decoded samples and its spectrogram at the same time. Measured in
-headless Chrome: a 64 MB capture analyses in ~0.2 s, 512 MB in ~2 s, and 768 MB does not fit
-(the heap is capped at 4 GB); the app then reports "out of memory: this capture is too large..."
+headless Chrome, before the gap-list work added windowing (first 16M samples only) and the
+automatic searches -- not re-measured since: a 64 MB capture analysed in ~0.2 s, 512 MB in ~2 s,
+and 768 MB did not fit (the heap is capped at 4 GB); the app then reports "out of memory: this capture is too large..."
 and keeps working. The decoded message shown in the results panel is capped at 10,000 characters
 (Qt's layout of one enormous line took minutes); the full text is not otherwise affected.
 
@@ -168,6 +169,12 @@ The WASM build is **single-threaded** (the `wasm_singlethread` Qt kit, and no
 `-pthread`). Multi-threaded WASM needs `SharedArrayBuffer`, which browsers only
 enable when the page is served with `Cross-Origin-Opener-Policy` and
 `Cross-Origin-Embedder-Policy` headers. Plain static hosts don't send those.
-The single-threaded build runs from any static file server as-is. If DSP work
-ever needs to leave the UI thread, the plan is a Web Worker running a second
-WASM instance, not in-module threads.
+The single-threaded build runs from any static file server as-is. DSP work does
+leave the UI thread, as that plan said it would: the analysis runs in a Web Worker
+(`web/js/analysis-worker.js`) that loads a second WASM instance, the bridge module
+(`sigbridge.js`/`sigbridge.wasm`, the whole pipeline without Qt), plus the ONNX
+classifier. Options go to the worker, and the result comes back, in the binary format
+of `app/pipeline/pipeline_io.hpp` (unit-tested natively); the Qt app takes the result
+as one transferred buffer. No threads inside either module, so still no COOP/COEP
+headers. If the page cannot start a worker, the app falls back to running the same
+analysis inside its own module (`WasmBackend`), blocking the UI while it does.

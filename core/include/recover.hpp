@@ -61,7 +61,9 @@ struct RecoveryResult {
 //         an RRC filter is not a matched filter for a rectangular pulse, and using it
 //         on one measurably hurts the lock rather than helping it (see PulseShape's
 //         own comment).
+//  rolloff: the RRC filter's excess-bandwidth factor in (0, 1] (ignored for Rect). 0.35 is
+//         the common default; Gap-list Phase 2.3's automatic search also tries 0.25/0.5.
 RecoveryResult recover_linear(const std::vector<std::complex<float>>& raw, unsigned int sps,
-                              ModulationScheme scheme, PulseShape pulse = PulseShape::Rrc);
+                              ModulationScheme scheme, PulseShape pulse = PulseShape::Rrc, float rolloff = 0.35f);
 
 }  // namespace sigcore

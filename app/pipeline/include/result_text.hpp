@@ -35,12 +35,35 @@ std::string python_repr(const std::string& text);
 // in both modes). Defaults to false so this function's output for a plain analysis
 // stays byte-identical to the original GUI panel's text (checked in test_result_text.cpp
 // against 70 recorded scenarios); the GUI's ResultsPanel passes true.
+//
+// `show_decode_status` (Gap-list Phase 1.1): changes what the "Decoded message" line
+// actually shows, based on result.decode_status -- the ORIGINAL app (and this function,
+// with this flag off) prints whatever bits happen to be available (FEC-decoded, else
+// de-interleaved, else raw demodulated) unconditionally, labelled "Decoded message"
+// regardless of whether anything actually verified it, which on a capture analysed with
+// the wrong settings shows a long hex string as if it were a real result. With this on:
+// Verified prints "Decoded message (verified):", Structured prints "Decoded message
+// (structured, not FEC-verified):", and Unverified prints "No verified decode." followed
+// by the same bits under "Raw bits (unverified):" instead. Defaults to false for the
+// same byte-identical-with-the-original reason as show_soft_decoding_info; the GUI
+// passes true.
 std::string format_result_text(const PipelineResult& result, size_t max_message_chars = SIZE_MAX,
-                               bool show_soft_decoding_info = false);
+                               bool show_soft_decoding_info = false, bool show_decode_status = false);
 
 // The status bar line after a successful run:
 // "Done. Predicted modulation: bpsk (100% confidence)."
-std::string format_done_status(const PipelineResult& result);
+// `show_decode_status` (Gap-list Phase 1.1), off by default for the same byte-identical-
+// with-the-original reason as format_result_text's own flag: appends a short clause
+// reflecting result.decode_status -- " Decoded message verified.", " Decode is
+// structured (not FEC-verified).", or " No verified decode." -- so the status bar
+// itself says plainly whether what is in the panel was actually checked, not just the
+// panel text.
+std::string format_done_status(const PipelineResult& result, bool show_decode_status = false);
+
+// Gap-list Phase 2.9: the whole result as one JSON object (UTF-8), for export. Carries
+// every parameter the panel shows plus decode status and where each value came from.
+// Bit strings are '0'/'1' text; the message is the same text the panel shows, JSON-escaped.
+std::string format_result_json(const PipelineResult& result);
 
 // Feature 4 (SIH26147 extra feature) panel text: frame length, sync word (bits and hex),
 // header composition and column labels, or a plain "nothing found" line when

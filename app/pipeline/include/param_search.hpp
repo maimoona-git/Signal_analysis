@@ -28,6 +28,7 @@
 // feature spec) and let a user pick a different one when the top guess is still
 // wrong -- decode correctness is evidence, not proof.
 
+#include <chrono>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -83,6 +84,9 @@ struct ParamSearchOptions {
     double confidence_floor = 0.5;
     // The GUI shows the ranked list; nothing needs more than a modest page of it.
     size_t max_candidates_kept = 200;
+    // Gap-list Phase 2.1: stop trying further candidates once this moment passes (what has
+    // been ranked so far is still returned). Unset = run to completion, as before.
+    std::optional<std::chrono::steady_clock::time_point> deadline;
 };
 
 // Throws std::invalid_argument only for empty input.
@@ -97,5 +101,13 @@ ParamSearchResult search_params(const Bits& bits, const ParamSearchOptions& opti
 // that would add up fast). Throws std::invalid_argument for an offset at or past the
 // end of `bits`, or for anything the original decode would already throw for.
 Bits decode_candidate(const Bits& bits, const ParamCandidate& candidate);
+
+// Gap-list Phase 6 (found on a real, non-digital capture): how much better `candidate` decodes
+// `bits` at its true alignment than the SAME stream rotated by 1 and by 3 bits. A real codeword
+// stops being one when shifted, so the margin is large (~0.05 to 0.1); a stream of long runs
+// (a smooth analogue signal demodulated to bits) barely changes, so a decoder "agrees" with it
+// shifted just as well -- that was reported "verified" before this check existed. Returns
+// agreement(aligned) - max(agreement(shifted)); 0 for a candidate with no FEC.
+double alignment_margin(const Bits& bits, const ParamCandidate& candidate);
 
 }  // namespace sigapp

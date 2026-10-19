@@ -20,12 +20,15 @@ fonts/ibm-plex-sans-latin-400-normal.woff2
 fonts/ibm-plex-sans-latin-500-normal.woff2
 fonts/ibm-plex-sans-latin-600-normal.woff2
 index.html
+js/analysis-worker.js
 js/onnx-classifier.mjs
 models/modulation_classifier.json
 models/modulation_classifier.onnx
 qtloader.js
 sigapp.js
 sigapp.wasm
+sigbridge.js
+sigbridge.wasm
 vendor/ort/ort-wasm-simd-threaded.mjs
 vendor/ort/ort-wasm-simd-threaded.wasm
 vendor/ort/ort.wasm.min.mjs"

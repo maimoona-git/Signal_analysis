@@ -224,6 +224,78 @@ TEST_CASE("format_result_text: soft-decoding info is opt-in and does not disturb
     CHECK(format_result_text(r, SIZE_MAX, true).find("Re-encode agreement:") == std::string::npos);
 }
 
+// Gap-list Phase 1.6: the "full parameter display" lines -- sample-rate source,
+// samples/symbol used, the symbol-rate estimate, the channel used, and rank-
+// analysis/raster summaries -- are all opt-in behind the same show_decode_status
+// flag as Phase 1.1/1.3's additions, for the same byte-identical-by-default reason.
+TEST_CASE("format_result_text: the full parameter display is opt-in and reports every new field") {
+    PipelineResult r;
+    r.predicted_modulation = "bpsk";
+    r.boundaries.header_pattern = {1, 0};
+    r.sample_rate_source = SampleRateSource::AssumedDefault;
+    r.samples_per_symbol_used = 4;
+    r.symbol_rate_estimate = sigcore::SymbolRateEstimate{3.9, 0.87};
+    r.channel_used = sigcore::ChannelCandidate{12000.0, 4000.0, 0.65};
+    r.rank_analysis.detected = true;
+    r.rank_analysis.width = 48;
+    r.rank_analysis.code_rate = 0.5;
+    r.raster.detected = true;
+    r.raster.frame_length = 64;
+    r.raster.sync_word = {1, 0, 1, 1};
+
+    const std::string original = format_result_text(r);
+    CHECK(original.find("Sample rate source:") == std::string::npos);
+    CHECK(original.find("Samples/symbol used:") == std::string::npos);
+    CHECK(original.find("Symbol-rate estimate:") == std::string::npos);
+    CHECK(original.find("Channel used:") == std::string::npos);
+    CHECK(original.find("Code length (rank):") == std::string::npos);
+    CHECK(original.find("Frame length:") == std::string::npos);
+    CHECK(original.find("Sync word (raster):") == std::string::npos);
+
+    const std::string extended = format_result_text(r, SIZE_MAX, false, /*show_decode_status=*/true);
+    CHECK(extended.find("Sample rate source:   assumed default (1 MHz)") != std::string::npos);
+    CHECK(extended.find("Samples/symbol used:  4") != std::string::npos);
+    CHECK(extended.find("Symbol-rate estimate: 3.9 samples/symbol (confidence 0.87)") != std::string::npos);
+    CHECK(extended.find("Channel used:         center 12000 Hz, bandwidth 4000 Hz (confidence 0.65)") !=
+         std::string::npos);
+    CHECK(extended.find("Code length (rank):   48 bits, rate 0.500") != std::string::npos);
+    CHECK(extended.find("Frame length:         64 bits") != std::string::npos);
+    CHECK(extended.find("Sync word (raster):   1011") != std::string::npos);
+
+    // undetected/unset: none of these lines appear, even opted in
+    PipelineResult plain;
+    plain.boundaries.header_pattern = {1, 0};
+    plain.sample_rate_source = SampleRateSource::FromFileHeader;
+    const std::string plain_extended = format_result_text(plain, SIZE_MAX, false, true);
+    CHECK(plain_extended.find("Sample rate source:   from file header") != std::string::npos);
+    CHECK(plain_extended.find("Symbol-rate estimate:") == std::string::npos);
+    CHECK(plain_extended.find("Channel used:") == std::string::npos);
+    CHECK(plain_extended.find("Code length (rank):") == std::string::npos);
+    CHECK(plain_extended.find("Frame length:") == std::string::npos);
+}
+
+// Gap-list Phase 2.9: the JSON export carries status, sources and a correctly escaped message.
+TEST_CASE("format_result_json reports parameters, sources and escapes the message") {
+    PipelineResult r;
+    r.file_path = "a\"b.iq";
+    r.sample_rate = 8000.0;
+    r.sample_rate_source = SampleRateSource::FromSigmfMeta;
+    r.predicted_modulation = "bpsk";
+    r.predicted_confidence = 0.9;
+    r.decoded_bits = Bits{0,1,0,0,0,0,0,1, 0,0,0,0,1,0,1,0};  // "A\n"
+    r.boundaries.header_pattern = {1, 0};
+    r.header_pattern_source = HeaderPatternSource::FrameRaster;
+    r.decode_status = DecodeStatus::Verified;
+    r.reencode_agreement = 1.0;
+    const std::string j = format_result_json(r);
+    CHECK(j.find("\"file\": \"a\\\"b.iq\"") != std::string::npos);
+    CHECK(j.find("\"sample_rate_source\": \"sigmf_meta\"") != std::string::npos);
+    CHECK(j.find("\"decode_status\": \"verified\"") != std::string::npos);
+    CHECK(j.find("\"message\": \"A\\n\"") != std::string::npos);
+    CHECK(j.find("\"header_pattern_source\": \"frame_raster\"") != std::string::npos);
+    CHECK(j.front() == '{' && j[j.size() - 2] == '}');
+}
+
 // Feature 2: format_rank_analysis_text (new to this port, no original-app text to match).
 TEST_CASE("format_rank_analysis_text: not detected, and a detected spike") {
     RankAnalysis none;

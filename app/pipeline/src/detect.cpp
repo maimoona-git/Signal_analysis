@@ -7,56 +7,20 @@
 
 #include "correlate.hpp"
 #include "fec_dispatch.hpp"
+#include "fec_registry.hpp"
 
 namespace sigapp {
 
 namespace {
 
-constexpr unsigned int kMaxGridDim = 256;
-constexpr unsigned int kMaxGridAspectRatio = 8;
 constexpr double kMaxFecRoundTripBer = 0.05;
 constexpr size_t kMaxRunLength = 12;
 
 // Tie-break bonus (smaller than one header repeat) between candidates that
 // score equally: see the note in app/detect.py.
-constexpr std::array<const char*, 4> kFecKinds = {"viterbi", "ldpc", "rs", "concatenated"};
 constexpr std::array<double, 4> kFecBonus = {0.1, 0.2, 0.3, 0.4};
 
-std::vector<std::pair<unsigned int, unsigned int>> divisor_pairs(size_t n) {
-    std::vector<std::pair<unsigned int, unsigned int>> pairs;
-    const size_t max_rows = std::min<size_t>(n, kMaxGridDim);
-    for (size_t rows = 2; rows <= max_rows; ++rows) {
-        if (n % rows != 0) continue;
-        const size_t cols = n / rows;
-        if (cols >= 2 && cols <= kMaxGridDim &&
-            std::max(rows, cols) <= kMaxGridAspectRatio * std::min(rows, cols)) {
-            pairs.emplace_back(static_cast<unsigned int>(rows), static_cast<unsigned int>(cols));
-        }
-    }
-    return pairs;
-}
 
-// nullopt in the first slot = no interleaver (the identity candidate).
-std::vector<std::optional<InterleaverSpec>> interleaver_candidates(size_t n, unsigned int seed_range) {
-    std::vector<std::optional<InterleaverSpec>> candidates;
-    candidates.emplace_back(std::nullopt);
-
-    for (const auto& [rows, cols] : divisor_pairs(n)) {
-        candidates.emplace_back(InterleaverSpec::block(rows, cols));
-        candidates.emplace_back(InterleaverSpec::diagonal(rows, cols));
-    }
-    for (unsigned int branches = 2; branches <= 8; ++branches) {
-        for (unsigned int delay = 1; delay <= 4; ++delay) {
-            if (static_cast<size_t>(branches) * (branches - 1) * delay < n) {
-                candidates.emplace_back(InterleaverSpec::convolutional(branches, delay));
-            }
-        }
-    }
-    for (unsigned int seed = 0; seed < seed_range; ++seed) {
-        candidates.emplace_back(InterleaverSpec::pseudo_random(seed));
-    }
-    return candidates;
-}
 
 // Each scheme has one fixed rate, so the message length follows from the
 // encoded length (nullopt = this length cannot be a codeword of the scheme).
@@ -165,6 +129,7 @@ DetectionResult detect_params(const Bits& bits, std::optional<size_t> header_len
         };
         std::vector<Option> options;
         options.push_back({std::nullopt, std::nullopt, deinterleaved, 0.0});
+        const std::vector<std::string> kFecKinds = fec_detect_kinds();  // the original's four, in its order
         for (size_t k = 0; k < kFecKinds.size(); ++k) {
             const std::string fec = kFecKinds[k];
             const auto msg_len = fec_msg_len(fec, deinterleaved.size());

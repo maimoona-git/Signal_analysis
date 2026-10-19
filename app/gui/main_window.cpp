@@ -2,6 +2,7 @@
 
 #include <QDoubleValidator>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -231,7 +232,19 @@ void MainWindow::buildToolbar() {
     run_action_->setEnabled(false);
     toolbar->addAction(run_action_);
 
+    export_action_ = new QAction(QStringLiteral("Export Result..."), this);
+    connect(export_action_, &QAction::triggered, this, [this] { exportResult(); });
+    export_action_->setEnabled(false);
+    // added to the second toolbar row, below: the first row has no room left (a row-1 button
+    // pushed Samples/symbol off-screen, caught by the browser test)
+
     auto_detect_ = new QCheckBox(QStringLiteral("Auto-detect FEC/Interleaving"));
+    // Gap-list Phase 1.2: on by default -- a real capture's interleaver/FEC are
+    // essentially never known up front, so defaulting this off (the original app's
+    // own default, ported faithfully until now) meant a first-time user saw garbage
+    // instead of a correct auto-detected decode. Still a checkbox: a user who already
+    // knows the exact settings can turn it back off.
+    auto_detect_->setChecked(true);
     toolbar->addWidget(auto_detect_);
 
     toolbar->addWidget(new QLabel(QStringLiteral(" Sample rate (Hz, .IQ only): ")));
@@ -249,6 +262,8 @@ void MainWindow::buildToolbar() {
     // hardware actually produces them.
     toolbar->addWidget(new QLabel(QStringLiteral(" IQ format: ")));
     iq_format_ = new QComboBox;
+    // Gap-list Phase 2.7: "auto" guesses from the bytes (and says so in the panel).
+    iq_format_->addItem(QStringLiteral("auto-detect"), QStringLiteral("auto"));
     iq_format_->addItem(QStringLiteral("cf32 (float32)"), QStringLiteral("cf32"));
     iq_format_->addItem(QStringLiteral("ci16 (int16, e.g. USRP)"), QStringLiteral("ci16"));
     iq_format_->addItem(QStringLiteral("cu8 (uint8, e.g. RTL-SDR)"), QStringLiteral("cu8"));
@@ -260,16 +275,24 @@ void MainWindow::buildToolbar() {
     samples_per_symbol_->setRange(1, 64);
     samples_per_symbol_->setValue(1);
     toolbar->addWidget(samples_per_symbol_);
+    // Gap-list Phase 1.2: distinguishes the user actually typing/spinning a value
+    // from this field being changed programmatically by the auto-apply in
+    // finishAnalysis (which blocks signals while it does so) -- see sps_user_set_'s
+    // own comment.
+    connect(samples_per_symbol_, qOverload<int>(&QSpinBox::valueChanged), this, [this] { sps_user_set_ = true; });
 
     // Real-world signal support: a blind suggestion for the field above, filled in
     // once an analysis finishes (see PipelineResult::symbol_rate_estimate's own
-    // comment) -- advisory only, never applied automatically, since the field stays
-    // a required, exact input for demodulation. Empty until then, and cleared again
+    // comment). Gap-list Phase 1.2: at high confidence, and only when the user hasn't
+    // typed their own samples/symbol for this file, this is now also applied to the
+    // spinbox (not just shown) and the analysis re-run with it -- see finishAnalysis's
+    // own comment. The label text always says whether the value in effect is
+    // estimated or user-specified. Empty until an analysis finishes, and cleared again
     // on the next file load.
     symbol_rate_suggestion_ = new QLabel;
     symbol_rate_suggestion_->setToolTip(
-        QStringLiteral("A blind estimate of samples/symbol from the raw capture alone, for reference -- "
-                       "not applied automatically."));
+        QStringLiteral("A blind estimate of samples/symbol from the raw capture alone -- applied "
+                       "automatically at high confidence unless you've set your own value."));
     toolbar->addWidget(symbol_rate_suggestion_);
 
     // A second row: decoding-mode toggles. Split out from the row above (rather than
@@ -293,6 +316,14 @@ void MainWindow::buildToolbar() {
     recover_timing_->setToolTip(
         QStringLiteral("For a real capture (not one built for this app): matched-filter timing "
                        "recovery and carrier tracking instead of naive decimation."));
+    // Gap-list Phase 1.2: on by default. The pipeline itself only ever uses this for a
+    // linear scheme with samples_per_symbol > 1 (see PipelineOptions::recover_timing's
+    // own comment) -- a no-op otherwise -- so defaulting it on is safe for every other
+    // case and fixes the common one: samples_per_symbol > 1 with naive decimation left
+    // on, which silently decodes garbage on any capture with a real timing/carrier
+    // offset. A user who wants naive decimation on purpose (e.g. this project's own
+    // zero-offset synthetic captures) can still turn it off.
+    recover_timing_->setChecked(true);
     mode_toolbar->addWidget(recover_timing_);
 
     // Which transmit pulse shape recover_timing should assume -- only matters when
@@ -307,6 +338,22 @@ void MainWindow::buildToolbar() {
                        "the right choice for a real transmitter that pulse-shapes its output; Rect "
                        "assumes no shaping at all (simple NRZ/on-off pulses)."));
     mode_toolbar->addWidget(pulse_shape_);
+
+    // Gap-list Phase 1.5 (Problem C): force the scheme used for demodulation/decode
+    // instead of trusting the ML classifier's own top label -- for when the
+    // classifier is simply wrong, or for testing a known capture directly. "Auto"
+    // (the default) leaves the classifier in charge, same as always; every other
+    // entry is a name demod_dispatch.hpp's modulate/demodulate accept, in the same
+    // order PipelineOptions::modulation_override's own comment lists them.
+    modulation_override_ = new QComboBox;
+    modulation_override_->addItem(QStringLiteral("Auto (use classifier)"), QStringLiteral(""));
+    for (const char* scheme : {"bpsk", "qpsk", "psk8", "psk16", "psk32", "psk64", "qam4", "qam16", "qam32",
+                               "qam64", "qam128", "qam256", "ask2", "ask4", "ask8", "ask16", "ook", "fsk"}) {
+        modulation_override_->addItem(QString::fromLatin1(scheme).toUpper(), QString::fromLatin1(scheme));
+    }
+    modulation_override_->setToolTip(
+        QStringLiteral("Force the modulation scheme instead of trusting the classifier's own guess."));
+    mode_toolbar->addWidget(modulation_override_);
 
     // Real-world signal support: blind wideband channel detection. Off by default,
     // like recover_timing -- a real, separate mode, not attempted on every capture.
@@ -327,6 +374,35 @@ void MainWindow::buildToolbar() {
                        "same trick the real-world recovery above uses to find one."));
     connect(square_signal_, &QCheckBox::toggled, this, [this] { applySquareSignal(); });
     mode_toolbar->addWidget(square_signal_);
+    // A third row for the capture-level actions: row 2 already holds six controls, and adding
+    // these to it pushed the last ones into the toolbar's overflow menu, where a click found
+    // nothing (caught by the browser test).
+    addToolBarBreak();
+    QToolBar* capture_toolbar = addToolBar(QStringLiteral("Capture"));
+    capture_toolbar->addAction(export_action_);
+
+    // Gap-list Phase 4 (streaming): step through a file too big to analyse whole.
+    prev_window_action_ = new QAction(QStringLiteral("Previous window"), this);
+    next_window_action_ = new QAction(QStringLiteral("Next window"), this);
+    prev_window_action_->setEnabled(false);
+    next_window_action_->setEnabled(false);
+    connect(prev_window_action_, &QAction::triggered, this, [this] { if (window_stepper_) window_stepper_(-1); });
+    connect(next_window_action_, &QAction::triggered, this, [this] { if (window_stepper_) window_stepper_(+1); });
+    capture_toolbar->addAction(prev_window_action_);
+    capture_toolbar->addAction(next_window_action_);
+}
+
+void MainWindow::setStreamInfo(quint64 total_bytes, quint64 start_byte, quint64 window_bytes) {
+    stream_total_bytes_ = total_bytes;
+    stream_start_byte_ = start_byte;
+    stream_window_bytes_ = window_bytes;
+    updateWindowActions();
+}
+
+void MainWindow::updateWindowActions() {
+    const bool streamed = stream_total_bytes_ > stream_window_bytes_ && stream_window_bytes_ > 0;
+    prev_window_action_->setEnabled(streamed && stream_start_byte_ > 0);
+    next_window_action_->setEnabled(streamed && stream_start_byte_ + stream_window_bytes_ < stream_total_bytes_);
 }
 
 void MainWindow::openFile() {
@@ -336,14 +412,37 @@ void MainWindow::openFile() {
     }
     QPointer<MainWindow> self(this);
     QFileDialog::getOpenFileContent(
-        QStringLiteral("Signal captures (*.wav *.iq *.IQ *.sigmf-data);;All files (*)"),
+        QStringLiteral("Signal captures (*.wav *.iq *.IQ *.sigmf-data *.sigmf-meta);;All files (*)"),
                                     [self](const QString& name, const QByteArray& content) {
                                         if (self && !name.isEmpty()) self->loadFile(name, content);  // cancelled: empty name
                                     });
 }
 
+void MainWindow::exportResult() {
+    if (!last_result_) return;
+    const QByteArray json = QByteArray::fromStdString(sigapp::format_result_json(*last_result_));
+    QString name = QFileInfo(filename_).completeBaseName();
+    if (name.isEmpty()) name = QStringLiteral("analysis");
+    name += QStringLiteral("_analysis.json");
+    if (file_saver_) {
+        file_saver_(name, json);
+        return;
+    }
+    QFileDialog::saveFileContent(json, name);
+}
+
 void MainWindow::loadFile(const QString& filename, const QByteArray& bytes) {
+    // Gap-list Phase 2.6: a SigMF metadata sidecar is not a capture. Keep it and apply it
+    // (sample rate, sample format) to the capture opened before or after it; the loaded
+    // capture itself, and any results on screen, are left exactly as they are.
+    if (filename.endsWith(QStringLiteral(".sigmf-meta"), Qt::CaseInsensitive)) {
+        sigmf_meta_json_ = std::string(bytes.constData(), static_cast<size_t>(bytes.size()));
+        statusBar()->showMessage(QStringLiteral("Loaded SigMF metadata %1. It applies to the next analysis.").arg(filename));
+        return;
+    }
     ++run_id_;  // an analysis still in flight belongs to the previous file
+    stream_total_bytes_ = stream_start_byte_ = stream_window_bytes_ = 0;  // a plain load is the whole file
+    updateWindowActions();
     running_ = false;
     filename_ = filename;
     bytes_ = bytes;
@@ -358,7 +457,10 @@ void MainWindow::loadFile(const QString& filename, const QByteArray& bytes) {
     rank_analysis_->clearData();
     rank_analysis_text_->clear();
     symbol_rate_suggestion_->clear();
+    sps_user_set_ = false;
+    fractional_sps_.reset();
     last_result_.reset();
+    export_action_->setEnabled(false);
     param_search_result_ = sigapp::ParamSearchResult{};
     param_search_table_->setRowCount(0);
     param_search_text_->clear();
@@ -382,17 +484,30 @@ void MainWindow::runAnalysis() {
         if (ok) request.options.sample_rate = rate;
     }
     const QString iq_format = iq_format_->currentData().toString();
+    request.options.iq_format_auto = (iq_format == QStringLiteral("auto"));
     if (iq_format == QStringLiteral("ci16")) request.options.iq_format = sigcore::IqSampleFormat::Ci16;
     else if (iq_format == QStringLiteral("cu8")) request.options.iq_format = sigcore::IqSampleFormat::Cu8;
     else request.options.iq_format = sigcore::IqSampleFormat::Cf32;
     request.options.samples_per_symbol = static_cast<unsigned>(samples_per_symbol_->value());
+    if (fractional_sps_ && !sps_user_set_) request.options.samples_per_symbol_exact = fractional_sps_;
     request.options.auto_detect = auto_detect_->isChecked();
+    request.options.sigmf_meta_json = sigmf_meta_json_;
+    if (stream_total_bytes_ > 0) {
+        request.options.source_total_bytes = static_cast<size_t>(stream_total_bytes_);
+        request.options.source_start_byte = static_cast<size_t>(stream_start_byte_);
+    }
+    request.options.time_budget_sec = 5.0;  // single-threaded build: bound how long a hard capture can hold the page
+    request.options.window_samples = 16u * 1024u * 1024u;  // Gap-list Phase 4: bound analysis memory (128 MB of cf32)
+    request.options.fsk_auto = true;  // Gap-list Phase 2.10: only takes effect for FSK, and only when confident
     request.options.soft_decoding = soft_decoding_->isChecked();
     request.options.recover_timing = recover_timing_->isChecked();
     request.options.pulse_shape = (pulse_shape_->currentData().toString() == QStringLiteral("rect"))
         ? sigcore::PulseShape::Rect : sigcore::PulseShape::Rrc;
     request.options.find_channels_enabled = find_channels_->isChecked();
+    request.options.auto_extract_channel = find_channels_->isChecked();  // Gap-list Phase 2.5
     if (selected_channel_) request.options.select_channel = *selected_channel_;
+    const QString override_scheme = modulation_override_->currentData().toString();
+    if (!override_scheme.isEmpty()) request.options.modulation_override = override_scheme.toStdString();
 
     statusBar()->showMessage(QStringLiteral("Running analysis..."));
     running_ = true;
@@ -426,6 +541,7 @@ void MainWindow::finishAnalysis(quint64 run_id, bool ok, std::shared_ptr<const s
         return;
     }
     last_result_ = result;
+    export_action_->setEnabled(true);
     applySquareSignal();  // sets the waterfall from result->spectrogram (or its squared version) and resets the range controls
     constellation_->setData(result->samples);
     results_->showResult(*result);
@@ -434,10 +550,43 @@ void MainWindow::finishAnalysis(quint64 run_id, bool ok, std::shared_ptr<const s
     rank_analysis_->setData(result->rank_analysis);
     rank_analysis_text_->setPlainText(QString::fromStdString(sigapp::format_rank_analysis_text(result->rank_analysis)));
     if (result->symbol_rate_estimate) {
-        symbol_rate_suggestion_->setText(
-            QStringLiteral(" (suggested: %1, confidence %2%)")
-                .arg(result->symbol_rate_estimate->samples_per_symbol, 0, 'f', 1)
-                .arg(static_cast<int>(result->symbol_rate_estimate->confidence * 100.0 + 0.5)));
+        // Gap-list Phase 1.2: below kAutoApplySpsConfidence, this stays purely
+        // advisory text as before ("suggested: ..., confidence ..."); at or above it,
+        // and only when the user hasn't typed their own value for this file, the
+        // rounded estimate is actually applied to the spinbox (not just shown) and the
+        // analysis re-run with it, so a real capture decodes correctly without the
+        // user having to notice the suggestion and re-type it themselves. Either way
+        // the label always says which case this was -- "estimated" or "user" -- per
+        // the gap-list's own wording.
+        constexpr double kAutoApplySpsConfidence = 0.7;
+        const double est = result->symbol_rate_estimate->samples_per_symbol;
+        const double confidence = result->symbol_rate_estimate->confidence;
+        const int rounded = static_cast<int>(est + 0.5);
+        // Gap-list Phase 2.4: a clearly non-integer estimate (e.g. 7.5) is passed on exactly
+        // too, so the pipeline resamples onto an integer rate instead of slipping symbols.
+        const bool fractional = std::fabs(est - rounded) > 0.05 * rounded && rounded >= 2;
+        const bool fractional_new = fractional && !fractional_sps_;
+        if (!sps_user_set_ && confidence >= kAutoApplySpsConfidence && rounded >= samples_per_symbol_->minimum() &&
+            rounded <= samples_per_symbol_->maximum() && (rounded != samples_per_symbol_->value() || fractional_new)) {
+            fractional_sps_ = fractional ? std::optional<double>(est) : std::nullopt;
+            symbol_rate_suggestion_->setText(QStringLiteral(" (samples/symbol: %1, estimated, confidence %2%)")
+                                                  .arg(rounded)
+                                                  .arg(static_cast<int>(confidence * 100.0 + 0.5)));
+            samples_per_symbol_->blockSignals(true);
+            samples_per_symbol_->setValue(rounded);
+            samples_per_symbol_->blockSignals(false);
+            QPointer<MainWindow> self(this);
+            QMetaObject::invokeMethod(this, [self] { if (self) self->runAnalysis(); }, Qt::QueuedConnection);
+        } else if (sps_user_set_) {
+            symbol_rate_suggestion_->setText(QStringLiteral(" (samples/symbol: %1, user-specified; estimate %2, confidence %3%)")
+                                                  .arg(samples_per_symbol_->value())
+                                                  .arg(est, 0, 'f', 1)
+                                                  .arg(static_cast<int>(confidence * 100.0 + 0.5)));
+        } else {
+            symbol_rate_suggestion_->setText(QStringLiteral(" (suggested: %1, confidence %2%)")
+                                                  .arg(est, 0, 'f', 1)
+                                                  .arg(static_cast<int>(confidence * 100.0 + 0.5)));
+        }
     } else {
         symbol_rate_suggestion_->clear();
     }
@@ -455,15 +604,15 @@ void MainWindow::finishAnalysis(quint64 run_id, bool ok, std::shared_ptr<const s
             channel_table_->setItem(row, 1, new QTableWidgetItem(QString::number(c.bandwidth_hz, 'f', 1)));
             channel_table_->setItem(row, 2, new QTableWidgetItem(QString::number(c.confidence, 'f', 3)));
         }
-        if (result->channel_extracted && selected_channel_ && *selected_channel_ < channels.size()) {
-            channel_table_->selectRow(static_cast<int>(*selected_channel_));
+        if (result->channel_extracted && result->channel_index && *result->channel_index < channels.size()) {
+            channel_table_->selectRow(static_cast<int>(*result->channel_index));
         }
     }
     param_search_result_ = sigapp::ParamSearchResult{};
     param_search_table_->setRowCount(0);
     param_search_text_->clear();
     search_params_button_->setEnabled(true);
-    statusBar()->showMessage(QString::fromStdString(sigapp::format_done_status(*result)));
+    statusBar()->showMessage(QString::fromStdString(sigapp::format_done_status(*result, /*show_decode_status=*/true)));
 }
 
 void MainWindow::applySquareSignal() {

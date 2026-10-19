@@ -1,14 +1,15 @@
 # Test coverage: this port vs the native app's suite
 
 The native app has **118 tests** (94 test functions, some parametrised) in 23 files. This
-port has **205 automated tests** plus **608 recorded comparisons against the original**:
+port has **365 automated tests** plus **608 recorded comparisons against the original** (five of the
+84 pipeline scenarios now differ from the original on purpose -- see the notes at the bottom):
 
 | Suite | Tests | Runs on | Command |
 | --- | ---: | --- | --- |
-| C++ core / pipeline / bridge (14 programs) | 141 (118 without the GUI widgets) | native; WASM under node | `ctest` |
-| GUI widgets (`test_gui`, among the above) | 23 | desktop Qt, offscreen | `ctest` (native, needs Qt) |
-| JS bridge + model + pipeline (`tests/bridge/*.test.mjs`) | 50 | WASM under node | `ctest` (`test_bridge_js`) |
-| The browser app in real Chrome (`tests/gui/browser-gui.test.mjs`) | 14 (+1 opt-in) | headless Chrome | `ctest` (`test_browser_gui`) |
+| C++ core / pipeline / bridge (25 programs) | 277 (229 without the GUI widgets) | native; WASM under node | `ctest` |
+| GUI widgets (`test_gui`, among the above) | 48 | desktop Qt, offscreen | `ctest` (native, needs Qt) |
+| JS bridge + model + pipeline (`tests/bridge/*.test.mjs`) | 69 | WASM under node | `ctest` (`test_bridge_js`) |
+| The browser app in real Chrome (`tests/gui/browser-gui.test.mjs`) | 18 (+1 opt-in) | headless Chrome | `ctest` (`test_browser_gui`) |
 | The static site, relocated, stock server | 1 script (re-runs the 14) | headless Chrome | `ctest` (`test_static_site`) |
 | ML chain smoke (`scripts/browser-smoke.sh`) | 11 captures + 2 pipelines | headless Chrome | manual |
 
@@ -84,7 +85,8 @@ Things the native app never needed and this port does:
 ## Known limits (documented, not hidden)
 
 - The shipped weights misclassify some modulations (`ml/README.md`); the tests check the port matches the original, not that the model is accurate.
-- The original's LDPC decoder cannot correct single-bit errors at codeword positions 7, 9, 13, 15, and its
-  convolutional-interleaver + FEC detection does not recover the message; both are reproduced faithfully.
-- Very large captures fail with a clear out-of-memory message: measured, 512 MB (64M samples) analyses in
-  about 2 s and 768 MB does not fit (the browser holds the capture, its samples and its spectrogram at once).
+- The original's LDPC decoder cannot correct single-bit errors at codeword positions 7, 9, 13, 15; that is
+  reproduced faithfully. Its convolutional-interleaver + FEC detection did not recover the message; that one
+  is now FIXED here (the four `*_convolutional_auto` pipeline records differ from the original on purpose).
+- Very large captures fail with a clear out-of-memory message: measured before windowing, 512 MB (64M samples)
+  analysed in about 2 s and 768 MB did not fit (the browser holds the capture, its samples and its spectrogram at once).

@@ -593,8 +593,13 @@ TEST_CASE("results panel is read-only and shows results, errors and nothing") {
     o.sample_rate = 8000.0;
     const auto result = sigapp::run_pipeline(bytes.data(), bytes.size(), "fsk_plain.iq", o, {"fsk", 1.0});
     panel.showResult(result);
-    CHECK(panel.toPlainText().toStdString() == sigapp::format_result_text(result));
-    CHECK(panel.toPlainText().contains("Decoded message:      'SIH2026!'"));
+    // ResultsPanel::showResult passes both opt-in flags (soft-decoding info, and
+    // Gap-list Phase 1.1's decode-status label) -- match that, not the defaults.
+    CHECK(panel.toPlainText().toStdString() ==
+          sigapp::format_result_text(result, SIZE_MAX, /*show_soft_decoding_info=*/true, /*show_decode_status=*/true));
+    // No FEC applied and nothing for the frame raster to find in a single, short,
+    // non-repeating message: Unverified, so "Raw bits", not "Decoded message".
+    CHECK(panel.toPlainText().contains("Raw bits (unverified):      'SIH2026!'"));
     panel.showError(QStringLiteral("boom"));
     CHECK(panel.toPlainText() == QStringLiteral("Error: boom"));
     panel.clearText();
@@ -639,7 +644,7 @@ TEST_CASE("main window: layout and controls match the native app") {
     CHECK(win.runAction()->text() == "Run Analysis");
     CHECK(!win.runAction()->isEnabled());                                  // nothing loaded yet
     CHECK(win.autoDetectCheckBox()->text() == "Auto-detect FEC/Interleaving");
-    CHECK(!win.autoDetectCheckBox()->isChecked());
+    CHECK(win.autoDetectCheckBox()->isChecked());  // Gap-list Phase 1.2: on by default
     CHECK(win.sampleRateEdit()->placeholderText() == "default");
     CHECK(win.sampleRateEdit()->maximumWidth() == 90 && win.sampleRateEdit()->minimumWidth() == 90);
     CHECK(win.samplesPerSymbolSpinBox()->minimum() == 1 && win.samplesPerSymbolSpinBox()->maximum() == 64);
@@ -726,25 +731,25 @@ TEST_CASE("main window: run analysis sends the toolbar settings to the backend")
     MainWindow win(&backend);
     win.loadFile("fsk_plain.iq", demo_bytes("fsk_plain.iq"));
 
-    win.runAnalysis();                                        // defaults: blank rate, 1 sample/symbol, no auto-detect
+    win.runAnalysis();  // defaults: blank rate, 1 sample/symbol, auto-detect on (Gap-list Phase 1.2)
     pump();
     CHECK(backend.requests.size() == 1);
     CHECK(backend.requests[0].filename == "fsk_plain.iq");
     CHECK(backend.requests[0].bytes == demo_bytes("fsk_plain.iq"));
     CHECK(!backend.requests[0].options.sample_rate.has_value());
     CHECK(backend.requests[0].options.samples_per_symbol == 1);
-    CHECK(!backend.requests[0].options.auto_detect);
+    CHECK(backend.requests[0].options.auto_detect);
     CHECK(!backend.requests[0].options.interleaver && !backend.requests[0].options.fec_scheme);   // the GUI never sets these
 
     win.sampleRateEdit()->setText("8000");
     win.samplesPerSymbolSpinBox()->setValue(4);
-    win.autoDetectCheckBox()->setChecked(true);
+    win.autoDetectCheckBox()->setChecked(false);
     win.runAnalysis();
     pump();
     CHECK(backend.requests.size() == 2);
     CHECK(backend.requests[1].options.sample_rate == std::optional<double>(8000.0));
     CHECK(backend.requests[1].options.samples_per_symbol == 4);
-    CHECK(backend.requests[1].options.auto_detect);
+    CHECK(!backend.requests[1].options.auto_detect);  // proves the checkbox is wired through, now that on-by-default is covered above
 
     win.sampleRateEdit()->setText("  2400000 ");                // surrounding spaces are ignored
     win.runAnalysis();
@@ -767,8 +772,11 @@ TEST_CASE("main window: a finished analysis fills the plots, the panel and the s
     CHECK(win.waterfall()->image().width() == static_cast<int>(r.spectrogram.nfft));
     CHECK(win.waterfall()->image().height() == static_cast<int>(r.spectrogram.frames));
     CHECK(win.constellation()->points().size() == r.samples.size());      // 512 samples: all kept
-    CHECK(win.resultsPanel()->toPlainText().toStdString() == sigapp::format_result_text(r));
-    CHECK(win.statusBar()->currentMessage().toStdString() == sigapp::format_done_status(r));
+    // The real GUI passes every opt-in flag (soft-decoding info, and Gap-list Phase
+    // 1.1's decode-status label) -- match that, not the defaults.
+    CHECK(win.resultsPanel()->toPlainText().toStdString() ==
+          sigapp::format_result_text(r, SIZE_MAX, /*show_soft_decoding_info=*/true, /*show_decode_status=*/true));
+    CHECK(win.statusBar()->currentMessage().toStdString() == sigapp::format_done_status(r, /*show_decode_status=*/true));
     CHECK(win.runAction()->isEnabled());
 }
 
@@ -798,19 +806,19 @@ TEST_CASE("main window: the recover-timing toggle is sent to the backend") {
     StubBackend backend;
     MainWindow win(&backend);
     win.loadFile("bpsk_ldpc_block.iq", demo_bytes("bpsk_ldpc_block.iq"));
-    CHECK(!win.recoverTimingCheckBox()->isChecked());   // off by default, like soft decoding
+    CHECK(win.recoverTimingCheckBox()->isChecked());   // Gap-list Phase 1.2: on by default
     win.sampleRateEdit()->setText("8000");
     win.samplesPerSymbolSpinBox()->setValue(4);
     backend.force_fec_scheme = "ldpc";
     backend.force_fec_msg_len = 64;
     win.runAnalysis();
     pump();
-    CHECK(!backend.requests.back().options.recover_timing);
+    CHECK(backend.requests.back().options.recover_timing);
 
-    win.recoverTimingCheckBox()->setChecked(true);
+    win.recoverTimingCheckBox()->setChecked(false);
     win.runAnalysis();
     pump();
-    CHECK(backend.requests.back().options.recover_timing);
+    CHECK(!backend.requests.back().options.recover_timing);
 }
 
 TEST_CASE("main window: the pulse-shape combo box is sent to the backend") {
@@ -835,6 +843,94 @@ TEST_CASE("main window: the pulse-shape combo box is sent to the backend") {
     CHECK(backend.requests.back().options.pulse_shape == sigcore::PulseShape::Rect);
 }
 
+TEST_CASE("main window: Export Result saves the last analysis as JSON, and only once there is one") {
+    StubBackend backend;
+    MainWindow win(&backend);
+    QString saved_name;
+    QByteArray saved;
+    win.setFileSaver([&](const QString& n, const QByteArray& b) { saved_name = n; saved = b; });
+    win.loadFile("fsk_plain.iq", demo_bytes("fsk_plain.iq"));
+    CHECK(!win.exportAction()->isEnabled());
+    win.exportResult();
+    CHECK(saved.isEmpty());
+
+    win.sampleRateEdit()->setText("8000");
+    win.runAnalysis();
+    pump();
+    CHECK(win.exportAction()->isEnabled());
+    win.exportAction()->trigger();
+    CHECK(saved_name == "fsk_plain_analysis.json");
+    CHECK(saved.startsWith("{"));
+    CHECK(saved.contains("\"decode_status\""));
+
+    win.loadFile("fsk_plain.iq", demo_bytes("fsk_plain.iq"));
+    CHECK(!win.exportAction()->isEnabled());
+}
+
+TEST_CASE("main window: a .sigmf-meta file is kept as a sidecar and sent with the next analysis") {
+    StubBackend backend;
+    MainWindow win(&backend);
+    win.loadFile("fsk_plain.iq", demo_bytes("fsk_plain.iq"));
+    CHECK(!win.hasSigmfMeta());
+    const QByteArray meta = R"({"global":{"core:datatype":"cf32_le","core:sample_rate":8000}})";
+    win.loadFile("capture.sigmf-meta", meta);
+    CHECK(win.hasSigmfMeta());
+    CHECK(win.loadedFilename() == "fsk_plain.iq");  // the capture itself is untouched
+    CHECK(win.statusBar()->currentMessage().contains("SigMF metadata"));
+    win.runAnalysis();
+    pump();
+    CHECK(backend.requests.back().options.sigmf_meta_json.has_value());
+    CHECK(backend.requests.back().options.sigmf_meta_json->find("8000") != std::string::npos);
+}
+
+TEST_CASE("main window: Previous/Next window follow a streamed file's position and call the stepper") {
+    StubBackend backend;
+    MainWindow win(&backend);
+    std::vector<int> steps;
+    win.setWindowStepper([&](int d) { steps.push_back(d); });
+    win.loadFile("big.iq", demo_bytes("fsk_plain.iq"));
+    CHECK(!win.previousWindowAction()->isEnabled() && !win.nextWindowAction()->isEnabled());  // whole file
+
+    win.setStreamInfo(1000, 0, 400);  // first of three windows
+    CHECK(!win.previousWindowAction()->isEnabled());
+    CHECK(win.nextWindowAction()->isEnabled());
+    win.nextWindowAction()->trigger();
+    CHECK(steps == std::vector<int>{+1});
+
+    win.setStreamInfo(1000, 400, 400);  // middle
+    CHECK(win.previousWindowAction()->isEnabled() && win.nextWindowAction()->isEnabled());
+    win.setStreamInfo(1000, 800, 400);  // last (partial) window
+    CHECK(win.previousWindowAction()->isEnabled());
+    CHECK(!win.nextWindowAction()->isEnabled());
+
+    win.sampleRateEdit()->setText("8000");
+    win.runAnalysis();
+    pump();
+    CHECK(backend.requests.back().options.source_total_bytes == 1000);  // the position rides along
+    CHECK(backend.requests.back().options.source_start_byte == 800);
+
+    win.loadFile("other.iq", demo_bytes("fsk_plain.iq"));  // a plain load is the whole file again
+    CHECK(!win.previousWindowAction()->isEnabled() && !win.nextWindowAction()->isEnabled());
+}
+
+TEST_CASE("main window: the modulation-override combo box is sent to the backend") {
+    StubBackend backend;
+    MainWindow win(&backend);
+    win.loadFile("fsk_plain.iq", demo_bytes("fsk_plain.iq"));
+    CHECK(win.modulationOverrideComboBox()->currentData().toString().isEmpty());  // "Auto" by default
+
+    win.runAnalysis();
+    pump();
+    CHECK(!backend.requests.back().options.modulation_override.has_value());
+
+    const int bpsk_index = win.modulationOverrideComboBox()->findData(QStringLiteral("bpsk"));
+    CHECK(bpsk_index >= 0);
+    win.modulationOverrideComboBox()->setCurrentIndex(bpsk_index);
+    win.runAnalysis();
+    pump();
+    CHECK(backend.requests.back().options.modulation_override == std::optional<std::string>("bpsk"));
+}
+
 TEST_CASE("main window: the symbol-rate suggestion label fills in after analysis, and clears on a new file") {
     StubBackend backend;
     MainWindow win(&backend);
@@ -849,11 +945,34 @@ TEST_CASE("main window: the symbol-rate suggestion label fills in after analysis
     pump();
     // A real capture, long enough for estimate_symbol_rate's own minimum -- the DSP
     // claim itself (accuracy, confidence behaviour) is proved in tests/core/
-    // test_symbol_rate.cpp; this only checks the label is actually wired up.
-    CHECK(win.symbolRateSuggestionLabel()->text().contains("suggested:"));
+    // test_symbol_rate.cpp; this only checks the label is actually wired up. The
+    // spinbox was set by hand just above, so Gap-list Phase 1.2's auto-apply must
+    // stay out of the way and the label must say so.
+    CHECK(win.symbolRateSuggestionLabel()->text().contains("user-specified"));
+    CHECK(win.samplesPerSymbolSpinBox()->value() == 4);  // untouched by the estimate
 
     win.loadFile("bpsk_ldpc_block.iq", demo_bytes("bpsk_ldpc_block.iq"));
     CHECK(win.symbolRateSuggestionLabel()->text().isEmpty());  // cleared by the new load
+}
+
+TEST_CASE("main window: the symbol-rate estimate is auto-applied when the user hasn't set one") {
+    StubBackend backend;
+    MainWindow win(&backend);
+    win.loadFile("bpsk_ldpc_block.iq", demo_bytes("bpsk_ldpc_block.iq"));
+    win.sampleRateEdit()->setText("8000");
+    backend.force_fec_scheme = "ldpc";
+    backend.force_fec_msg_len = 64;
+
+    // samples_per_symbol left at its construction-time default (1, untouched), so
+    // Gap-list Phase 1.2's auto-apply is free to act on a high-confidence estimate --
+    // this fixture's own real capture clears the threshold (proved here, not assumed).
+    win.runAnalysis();
+    pump();
+    pump();  // the auto-apply's own re-run is itself queued, one event loop turn behind
+    CHECK(backend.requests.size() == 2);  // the auto-apply reruns the analysis once
+    CHECK(win.samplesPerSymbolSpinBox()->value() == backend.requests.back().options.samples_per_symbol);
+    CHECK(win.samplesPerSymbolSpinBox()->value() != 1);
+    CHECK(win.symbolRateSuggestionLabel()->text().contains("estimated"));
 }
 
 TEST_CASE("main window: the IQ format combo box is sent to the backend") {
@@ -861,19 +980,26 @@ TEST_CASE("main window: the IQ format combo box is sent to the backend") {
     MainWindow win(&backend);
     win.loadFile("bpsk_ldpc_block.iq", demo_bytes("bpsk_ldpc_block.iq"));
     win.sampleRateEdit()->setText("8000");
-    CHECK(win.iqFormatComboBox()->currentData().toString() == "cf32");  // default: this project's own convention
+    CHECK(win.iqFormatComboBox()->currentData().toString() == "auto");  // Gap-list Phase 2.7 default
 
     win.runAnalysis();
     pump();
-    CHECK(backend.requests.back().options.iq_format == sigcore::IqSampleFormat::Cf32);
+    CHECK(backend.requests.back().options.iq_format_auto);
 
     win.iqFormatComboBox()->setCurrentIndex(1);
+    CHECK(win.iqFormatComboBox()->currentData().toString() == "cf32");
+    win.runAnalysis();
+    pump();
+    CHECK(!backend.requests.back().options.iq_format_auto);
+    CHECK(backend.requests.back().options.iq_format == sigcore::IqSampleFormat::Cf32);
+
+    win.iqFormatComboBox()->setCurrentIndex(2);
     CHECK(win.iqFormatComboBox()->currentData().toString() == "ci16");
     win.runAnalysis();
     pump();
     CHECK(backend.requests.back().options.iq_format == sigcore::IqSampleFormat::Ci16);
 
-    win.iqFormatComboBox()->setCurrentIndex(2);
+    win.iqFormatComboBox()->setCurrentIndex(3);
     CHECK(win.iqFormatComboBox()->currentData().toString() == "cu8");
     win.runAnalysis();
     pump();
@@ -1109,7 +1235,9 @@ TEST_CASE("main window: the Channels tab finds, and applies, a channel from a wi
     win.runAnalysis();
     pump();
     CHECK(win.channelTable()->rowCount() > 0);
-    CHECK(!win.extractChannelButton()->isEnabled());  // nothing selected yet
+    // Gap-list Phase 2.5: the strongest channel was extracted automatically on this very
+    // run (when narrower than the capture), and its row is shown selected.
+    CHECK(win.channelTable()->currentRow() >= 0 || !win.extractChannelButton()->isEnabled());
 
     int row = -1;
     for (int r = 0; r < win.channelTable()->rowCount(); ++r) {
@@ -1133,7 +1261,46 @@ TEST_CASE("main window: the Channels tab finds, and applies, a channel from a wi
 
 TEST_CASE("main window: the panel shows exactly what the ORIGINAL GUI showed for the same run") {
     // demo_ldpc_block_autodetect in pipeline.rec: the original pipeline run the way the
-    // GUI runs it (auto-detect on, 4 samples/symbol, 8 kHz, no explicit parameters).
+    // GUI runs it (auto-detect on, 4 samples/symbol, 8 kHz, no explicit parameters, and
+    // -- Gap-list Phase 1.2 -- recover-timing/carrier also on by default now, not left
+    // for the test to opt into). pipeline.rec's own panel_text_hex/status_hex for this
+    // record are deliberately left at the ORIGINAL app's text (test_result_text.cpp's
+    // own fixture test calls format_result_text with every opt-in flag off, and depends
+    // on that): this test compares the REAL GUI's own output instead, which has every
+    // opt-in flag on (soft-decoding info, Gap-list Phase 1.1's decode-status label) and
+    // now runs matched-filter recovery instead of naive decimation, so the raw bits and
+    // header pattern below differ from pipeline.rec's own naive-decimation fixture, not
+    // just the label wording. Captured directly from the real GUI, not assumed correct.
+    const char* expected_panel =
+        "File:                 bpsk_ldpc_block.iq\n"
+        "Format:               iq_cf32\n"
+        "Sample rate:          8000 Hz\n"
+        "Sample rate source:   user-specified\n"
+        "IQ sample format:     cf32 (guessed from the data)\n"
+        "Strongest signal:     -93.75 Hz from center, ~281.25 Hz wide (within 10 dB of the peak)\n"
+        "Parameter search:     found automatically at bit offset 0 (confidence 1.00)\n"
+        "Pulse shape:          rect (found by search)\n"
+        "Num samples:          512\n"
+        "Spectrogram shape:    (5, 256)\n"
+        "\n"
+        "Predicted modulation: bpsk (confidence 1.00)\n"
+        "Demodulated bits:     128\n"
+        "Samples/symbol used:  4\n"
+        "Symbol-rate estimate: 4.0 samples/symbol (confidence 1.00)\n"
+        "Detected interleaver: block (score 100)\n"
+        "Detected FEC:         ldpc\n"
+        "FEC-decoded bits:     64\n"
+        "Decoding mode:        hard\n"
+        "Re-encode agreement:  1.000\n"
+        "Decoded message (verified):      'SIH2026!'\n"
+        "\n"
+        "Header pattern:       0101001101001001 (assumed: first 16 bits)\n"
+        "Frame period:         8\n"
+        "Header positions:     [0]\n"
+        "Payload spans found:  1";
+    const char* expected_status =
+        "Done. Predicted modulation: bpsk (100% confidence). Decoded message verified.";
+
     const auto recs = read_records(data_path("pipeline.rec"));
     for (const auto& rec : recs) {
         if (field(rec, "name") != "demo_ldpc_block_autodetect") continue;
@@ -1146,8 +1313,8 @@ TEST_CASE("main window: the panel shows exactly what the ORIGINAL GUI showed for
         win.sampleRateEdit()->setText(QString::fromStdString(field(rec, "sample_rate")));
         win.runAnalysis();
         pump();
-        CHECK(win.resultsPanel()->toPlainText().toStdString() == from_hex(field(rec, "panel_text_hex")));
-        CHECK(win.statusBar()->currentMessage().toStdString() == from_hex(field(rec, "status_hex")));
+        CHECK(win.resultsPanel()->toPlainText().toStdString() == expected_panel);
+        CHECK(win.statusBar()->currentMessage().toStdString() == expected_status);
         return;
     }
     CHECK(false);  // scenario not found

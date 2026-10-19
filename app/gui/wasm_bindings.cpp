@@ -1,6 +1,8 @@
 // What the page's JavaScript can do with the running app (WASM only):
 //   Module.sigAppOpenFile(bytes, filename)  load a capture as if it had been picked
 //                                           with "Open File..." (drag-and-drop)
+//   Module.sigAppOpenWindow(slice, filename, totalBytes, startByte)
+//                                           load one slice of a file too big to hold whole
 //   Module.sigAppState()                    a snapshot of the UI: status text, results
 //                                           text, plot contents and where the toolbar
 //                                           controls are on the canvas, which the
@@ -15,6 +17,7 @@
 
 #include "error_text.hpp"
 #include "js_util.hpp"
+#include "wasm_worker_backend.hpp"
 #include "wasm_bindings.hpp"
 
 using emscripten::val;
@@ -55,6 +58,31 @@ void open_file(val bytes, std::string filename) {
         error = sigbridge::describe_exception(e);
     }
     sigbridge::throw_js_error(error);
+}
+
+// Gap-list Phase 4 (streaming): `bytes` is ONE slice of a file too big to load whole; the
+// page says where it sits (`start_byte`) in a file of `total_bytes`.
+void open_window(val bytes, std::string filename, double total_bytes, double start_byte) {
+    std::string error;
+    try {
+        if (!g_window) throw std::runtime_error("the window is not ready yet");
+        const std::vector<uint8_t> data = sigbridge::bytes_from_js(bytes);
+        g_window->loadFile(QString::fromStdString(filename),
+                           QByteArray(reinterpret_cast<const char*>(data.data()), static_cast<qsizetype>(data.size())));
+        g_window->setStreamInfo(static_cast<quint64>(total_bytes), static_cast<quint64>(start_byte),
+                                static_cast<quint64>(data.size()));
+        return;
+    } catch (const std::exception& e) {
+        error = sigbridge::describe_exception(e);
+    }
+    sigbridge::throw_js_error(error);
+}
+
+// The page's answer for a run handed to the analysis worker (see WorkerBackend).
+void worker_done(int id, val blob, std::string error, bool unavailable) {
+    std::vector<uint8_t> bytes;
+    if (!blob.isNull() && !blob.isUndefined()) bytes = sigbridge::bytes_from_js(blob);
+    WorkerBackend::finished(id, std::move(bytes), error, unavailable);
 }
 
 val state() {
@@ -98,6 +126,12 @@ val state() {
         controls.set("open", point(w, toolbar->widgetForAction(g_window->openAction())));
         controls.set("run", point(w, toolbar->widgetForAction(g_window->runAction())));
     }
+    for (QToolBar* tb : g_window->findChildren<QToolBar*>()) {
+        if (QWidget* pw = tb->widgetForAction(g_window->previousWindowAction())) controls.set("previousWindow", point(w, pw));
+        if (QWidget* nw = tb->widgetForAction(g_window->nextWindowAction())) controls.set("nextWindow", point(w, nw));
+    }
+    s.set("nextWindowEnabled", g_window->nextWindowAction()->isEnabled());
+    s.set("previousWindowEnabled", g_window->previousWindowAction()->isEnabled());
     controls.set("autoDetect", point(w, g_window->autoDetectCheckBox()));
     controls.set("sampleRate", point(w, g_window->sampleRateEdit()));
     controls.set("samplesPerSymbol", point(w, g_window->samplesPerSymbolSpinBox()));
@@ -111,6 +145,8 @@ void register_window_for_js(MainWindow* window) { g_window = window; }
 
 EMSCRIPTEN_BINDINGS(sig_app) {
     emscripten::function("sigAppOpenFile", &open_file);
+    emscripten::function("sigAppOpenWindow", &open_window);
+    emscripten::function("sigWorkerDone", &worker_done);
     emscripten::function("sigAppState", &state);
 }
 

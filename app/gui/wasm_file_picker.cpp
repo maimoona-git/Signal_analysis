@@ -7,15 +7,17 @@ namespace sigui {
 EM_JS(void, sig_pick_file_js, (), {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.wav,.iq,.IQ,.sigmf-data';
+    input.accept = '.wav,.iq,.IQ,.sigmf-data,.sigmf-meta';
     input.style.display = 'none';
     input.addEventListener('change', async () => {
         const file = input.files && input.files[0];
         input.remove();
         if (!file) return;
         try {
-            // Same entry point the drag-and-drop path uses: bytes into the WASM module.
-            Module['sigAppOpenFile'](new Uint8Array(await file.arrayBuffer()), file.name);
+            // Same entry point the drag-and-drop path uses (the page's loader, which reads a
+            // slice for a file too big to hold whole); the plain read is the fallback.
+            if (window.sigLoadCapture) await window.sigLoadCapture(file);
+            else Module['sigAppOpenFile'](new Uint8Array(await file.arrayBuffer()), file.name);
         } catch (e) {
             console.error('could not load the chosen file', e);
         }

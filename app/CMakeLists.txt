@@ -21,6 +21,7 @@ if(EMSCRIPTEN)
   qt_add_executable(sigapp
     main.cpp
     gui/wasm_backend.cpp
+    gui/wasm_worker_backend.cpp
     gui/wasm_bindings.cpp
     gui/wasm_file_picker.cpp
   )
@@ -42,6 +43,8 @@ if(EMSCRIPTEN)
   #   sigapp.js, sigapp.wasm     the Qt app (the WASM binary and its Emscripten loader)
   #   qtloader.js                Qt's loader
   #   js/onnx-classifier.mjs     runs the ML model with onnxruntime-web (web/js)
+  #   js/analysis-worker.js, sigbridge.js, sigbridge.wasm
+  #                              the analysis Web Worker and the second WASM instance it runs
   #   models/*.onnx, *.json      the exported classifier and its description (ml/models)
   #   vendor/ort/*               the onnxruntime-web runtime (from node_modules)
   #
@@ -60,7 +63,10 @@ if(EMSCRIPTEN)
       "$<TARGET_FILE_DIR:sigapp>/qtloader.js"
       "${PROJECT_SOURCE_DIR}/web/index.html"
       "${SIG_DIST_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E copy "${PROJECT_SOURCE_DIR}/web/js/onnx-classifier.mjs" "${SIG_DIST_DIR}/js"
+    COMMAND ${CMAKE_COMMAND} -E copy "${PROJECT_SOURCE_DIR}/web/js/onnx-classifier.mjs"
+      "${PROJECT_SOURCE_DIR}/web/js/analysis-worker.js" "${SIG_DIST_DIR}/js"
+    COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE_DIR:sigbridge_module>/sigbridge.js"
+      "$<TARGET_FILE_DIR:sigbridge_module>/sigbridge.wasm" "${SIG_DIST_DIR}"
     COMMAND ${CMAKE_COMMAND} -E copy
       "${PROJECT_SOURCE_DIR}/ml/models/modulation_classifier.onnx"
       "${PROJECT_SOURCE_DIR}/ml/models/modulation_classifier.json"
@@ -79,7 +85,7 @@ if(EMSCRIPTEN)
                     "will load but cannot classify signals")
   endif()
   add_custom_target(sigapp_dist ALL
-    DEPENDS sigapp
+    DEPENDS sigapp sigbridge_module
     ${SIG_STAGE_COMMANDS}
     COMMENT "Staging the static site into ${SIG_DIST_DIR}"
   )

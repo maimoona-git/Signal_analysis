@@ -64,4 +64,42 @@ Bits deinterleave(const Bits& bits, const InterleaverSpec& spec) { return deinte
 sigcore::LLRBuffer interleave(const sigcore::LLRBuffer& llrs, const InterleaverSpec& spec) { return interleave_t(llrs, spec); }
 sigcore::LLRBuffer deinterleave(const sigcore::LLRBuffer& llrs, const InterleaverSpec& spec) { return deinterleave_t(llrs, spec); }
 
+namespace {
+
+constexpr unsigned int kMaxGridDim = 256;
+constexpr unsigned int kMaxGridAspectRatio = 8;
+
+std::vector<std::pair<unsigned int, unsigned int>> divisor_pairs(size_t n) {
+    std::vector<std::pair<unsigned int, unsigned int>> pairs;
+    const size_t max_rows = std::min<size_t>(n, kMaxGridDim);
+    for (size_t rows = 2; rows <= max_rows; ++rows) {
+        if (n % rows != 0) continue;
+        const size_t cols = n / rows;
+        if (cols >= 2 && cols <= kMaxGridDim && std::max(rows, cols) <= kMaxGridAspectRatio * std::min(rows, cols)) {
+            pairs.emplace_back(static_cast<unsigned int>(rows), static_cast<unsigned int>(cols));
+        }
+    }
+    return pairs;
+}
+
+}  // namespace
+
+std::vector<std::optional<InterleaverSpec>> interleaver_candidates(size_t n, unsigned int seed_range) {
+    std::vector<std::optional<InterleaverSpec>> candidates;
+    candidates.emplace_back(std::nullopt);
+    for (const auto& [rows, cols] : divisor_pairs(n)) {
+        candidates.emplace_back(InterleaverSpec::block(rows, cols));
+        candidates.emplace_back(InterleaverSpec::diagonal(rows, cols));
+    }
+    for (unsigned int branches = 2; branches <= 8; ++branches) {
+        for (unsigned int delay = 1; delay <= 4; ++delay) {
+            if (static_cast<size_t>(branches) * (branches - 1) * delay < n) {
+                candidates.emplace_back(InterleaverSpec::convolutional(branches, delay));
+            }
+        }
+    }
+    for (unsigned int seed = 0; seed < seed_range; ++seed) candidates.emplace_back(InterleaverSpec::pseudo_random(seed));
+    return candidates;
+}
+
 }  // namespace sigapp

@@ -6,72 +6,14 @@
 
 #include "correlate.hpp"
 #include "fec_dispatch.hpp"
+#include "fec_registry.hpp"
 
 namespace sigapp {
 
 namespace {
 
-constexpr unsigned kMaxGridDim = 256;
-constexpr unsigned kMaxGridAspectRatio = 8;
-constexpr std::array<const char*, 4> kFecKinds = {"viterbi", "ldpc", "rs", "concatenated"};
 
-std::vector<std::pair<unsigned, unsigned>> divisor_pairs(size_t n) {
-    std::vector<std::pair<unsigned, unsigned>> pairs;
-    const size_t max_rows = std::min<size_t>(n, kMaxGridDim);
-    for (size_t rows = 2; rows <= max_rows; ++rows) {
-        if (n % rows != 0) continue;
-        const size_t cols = n / rows;
-        if (cols >= 2 && cols <= kMaxGridDim && std::max(rows, cols) <= kMaxGridAspectRatio * std::min(rows, cols)) {
-            pairs.emplace_back(static_cast<unsigned>(rows), static_cast<unsigned>(cols));
-        }
-    }
-    return pairs;
-}
 
-std::vector<std::optional<InterleaverSpec>> interleaver_candidates(size_t n, unsigned seed_range) {
-    std::vector<std::optional<InterleaverSpec>> out;
-    out.emplace_back(std::nullopt);
-    for (const auto& [rows, cols] : divisor_pairs(n)) {
-        out.emplace_back(InterleaverSpec::block(rows, cols));
-        out.emplace_back(InterleaverSpec::diagonal(rows, cols));
-    }
-    for (unsigned branches = 2; branches <= 8; ++branches) {
-        for (unsigned delay = 1; delay <= 4; ++delay) {
-            if (static_cast<size_t>(branches) * (branches - 1) * delay < n) {
-                out.emplace_back(InterleaverSpec::convolutional(branches, delay));
-            }
-        }
-    }
-    for (unsigned seed = 0; seed < seed_range; ++seed) out.emplace_back(InterleaverSpec::pseudo_random(seed));
-    return out;
-}
-
-// Same fixed-rate arithmetic as detect.cpp's own (kept independent on purpose: see
-// param_search.hpp's header comment on why this is a separate module).
-std::optional<size_t> fec_msg_len_for(const std::string& fec, size_t encoded_len) {
-    if (fec == "viterbi") {
-        if (encoded_len < 14 || encoded_len % 2) return std::nullopt;
-        const long long msg_len = static_cast<long long>(encoded_len / 2) - 6;
-        return msg_len > 0 ? std::optional<size_t>(static_cast<size_t>(msg_len)) : std::nullopt;
-    }
-    if (fec == "ldpc") {
-        if (encoded_len < 16 || encoded_len % 16) return std::nullopt;
-        return (encoded_len / 16) * 8;
-    }
-    if (fec == "rs") {
-        constexpr size_t block_bits = 15 * 8;
-        if (encoded_len < block_bits || encoded_len % block_bits) return std::nullopt;
-        return (encoded_len / block_bits) * 13;
-    }
-    if (fec == "concatenated") {
-        if (encoded_len < 14 || encoded_len % 2) return std::nullopt;
-        const size_t rs_bits_len = encoded_len / 2 - 6;
-        constexpr size_t block_bits = 15 * 8;
-        if (rs_bits_len < block_bits || rs_bits_len % block_bits) return std::nullopt;
-        return (rs_bits_len / block_bits) * 13;
-    }
-    return std::nullopt;
-}
 
 int header_repeat_score(const Bits& bits, size_t header_len) {
     if (bits.size() < header_len * 3 || header_len == 0) return 0;
@@ -93,10 +35,8 @@ int header_repeat_score(const Bits& bits, size_t header_len) {
 // measured noise baseline, normalised into [0, 1]; a real decode still reads close to
 // 1.0 (it agrees almost entirely), while noise reads close to 0.
 double noise_baseline(const std::string& fec) {
-    if (fec == "viterbi") return 0.88;
-    if (fec == "ldpc") return 0.75;
-    if (fec == "rs") return 0.98;
-    return 0.95;  // concatenated: almost never even completes on noise; a conservative default
+    const FecKind* k = find_fec(fec);
+    return k ? k->noise_baseline : 0.95;
 }
 
 // See param_search.hpp: a real decode match (`reencode_agreement`) is the primary
@@ -131,10 +71,12 @@ ParamSearchResult search_params(const Bits& bits_in, const ParamSearchOptions& o
 
     for (unsigned offset = 0; offset <= options.max_bit_offset; ++offset) {
         if (offset >= full_bits.size()) break;
+        if (options.deadline && std::chrono::steady_clock::now() > *options.deadline) break;
         const Bits bits(full_bits.begin() + static_cast<long>(offset), full_bits.end());
         const size_t hlen = std::min<size_t>(16, std::max<size_t>(4, bits.size() / 8));
 
         for (const auto& interleaver : interleaver_candidates(bits.size(), options.pseudo_random_seed_range)) {
+            if (options.deadline && std::chrono::steady_clock::now() > *options.deadline) break;
             Bits deinterleaved;
             try {
                 deinterleaved = interleaver.has_value() ? deinterleave(bits, *interleaver) : bits;
@@ -160,8 +102,9 @@ ParamSearchResult search_params(const Bits& bits_in, const ParamSearchOptions& o
                 result.candidates.push_back(std::move(c));
             }
 
-            for (const char* fec : kFecKinds) {
-                const auto msg_len = fec_msg_len_for(fec, deinterleaved.size());
+            for (const FecKind& kind : fec_kinds()) {
+                const char* fec = kind.name.c_str();
+                const auto msg_len = kind.msg_len_for(deinterleaved.size());
                 if (!msg_len.has_value()) continue;
                 try {
                     const Bits decoded = fec_decode(deinterleaved, fec, *msg_len);
@@ -219,6 +162,44 @@ Bits decode_candidate(const Bits& bits, const ParamCandidate& candidate) {
         working = fec_decode(working, *candidate.fec, *candidate.fec_msg_len);
     }
     return working;
+}
+
+double alignment_margin(const Bits& bits, const ParamCandidate& candidate) {
+    if (!candidate.fec || !candidate.fec_msg_len || candidate.bit_offset >= bits.size()) return 0.0;
+    Bits working(bits.begin() + static_cast<long>(candidate.bit_offset), bits.end());
+    if (candidate.interleaver.has_value()) {
+        try {
+            working = deinterleave(working, *candidate.interleaver);
+        } catch (const std::exception&) {
+            return 0.0;
+        }
+        if (candidate.interleaver->kind == "convolutional") {
+            const size_t b = *candidate.interleaver->branches;
+            const size_t flush = b * (b - 1) * *candidate.interleaver->delay_increment;
+            working.erase(working.begin(), working.begin() + static_cast<long>(std::min(flush, working.size())));
+        }
+    }
+    if (working.size() < 8) return 0.0;
+    auto agreement = [&](const Bits& w) {
+        try {
+            const Bits decoded = fec_decode(w, *candidate.fec, *candidate.fec_msg_len);
+            const Bits re = fec_encode(decoded, *candidate.fec);
+            const size_t n = std::min(re.size(), w.size());
+            size_t matches = 0;
+            for (size_t i = 0; i < n; ++i) matches += (re[i] == w[i]);
+            return n > 0 ? static_cast<double>(matches) / static_cast<double>(n) : 0.0;
+        } catch (const std::exception&) {
+            return 0.0;  // a shifted stream a decoder rejects outright is the good outcome
+        }
+    };
+    const double aligned = agreement(working);
+    double worst_shifted = 0.0;
+    for (size_t shift : {size_t{1}, size_t{3}}) {
+        Bits rotated(working.size());
+        for (size_t i = 0; i < working.size(); ++i) rotated[i] = working[(i + shift) % working.size()];
+        worst_shifted = std::max(worst_shifted, agreement(rotated));
+    }
+    return aligned - worst_shifted;
 }
 
 }  // namespace sigapp
