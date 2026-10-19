@@ -1014,6 +1014,99 @@ TEST_CASE("Parameter Search finds a code whose stream was padded by a high-order
     }
 }
 
+// 8-PSK through timing and carrier recovery used to fail (1 of 12 realistic captures): the coarse
+// carrier-offset estimate assumed 4-fold symmetry, only 4 of 8 phase rotations were tried, and the
+// carrier loop's default bandwidth slipped cycles on the narrow 8-PSK decision regions.
+TEST_CASE("an RRC-shaped 8-PSK capture with a carrier offset is recovered and verified") {
+    const std::string message = "REAL WORLD CAPTURE VERIFIED OK, HOLD POSITION AND REPORT STATUS NOW";
+    Bits payload;
+    for (unsigned char ch : message)
+        for (int b = 7; b >= 0; --b) payload.push_back((ch >> b) & 1);
+    const Bits coded = fec_encode(payload, "viterbi");
+    const auto impaired = make_impaired_iq(sigapp::modulate(coded, "psk8"), 8, /*cfo=*/0.004f, /*noise_amp=*/0.02f,
+                                           /*start_offset=*/5, /*noise_seed=*/321);
+    const auto bytes = iq_bytes(impaired);
+    PipelineOptions o;
+    o.sample_rate = 8000.0;
+    o.samples_per_symbol = 8;
+    o.recover_timing = true;
+    o.auto_detect = true;
+    const auto r = run_pipeline(bytes.data(), bytes.size(), "psk8.iq", o, {"psk8", 1.0});
+    CHECK(r.recovery_used);
+    CHECK(r.recovery_phase_ambiguity == 8u);
+    CHECK(r.decode_status == DecodeStatus::Verified);
+    CHECK(r.decoded_bits.has_value());
+    if (r.decoded_bits) {
+        // Recovery leaves the stream a few symbols off the start, so compare at the best shift.
+        const Bits& d = *r.decoded_bits;
+        bool matched = false;
+        for (int shift = -48; shift <= 48 && !matched; ++shift) {
+            size_t same = 0, total = 0;
+            for (size_t i = 60; i + 60 < payload.size(); ++i) {
+                const long j = static_cast<long>(i) + shift;
+                if (j < 0 || j >= static_cast<long>(d.size())) continue;
+                ++total;
+                same += d[static_cast<size_t>(j)] == payload[i];
+            }
+            matched = total > payload.size() / 2 && same * 100 >= total * 99;
+        }
+        CHECK(matched);
+    }
+}
+
+// The spectrogram classifier cannot tell QPSK from 8-PSK (same spectrum); the constellation check can.
+// Here its reading is the only route to a decode: the classifier's labels never include QPSK.
+TEST_CASE("the constellation reading rescues a capture the classifier mislabels, with no QPSK among its guesses") {
+    Rng rng(404);
+    Bits payload;
+    for (unsigned i = 0; i < 400; ++i) payload.push_back(static_cast<uint8_t>((rng.next() >> 33) & 1));
+    const Bits coded = fec_encode(payload, "viterbi");
+    const auto bytes = iq_bytes(sigapp::modulate(coded, "qpsk"));
+    PipelineOptions o;
+    o.sample_rate = 8000.0;
+    o.auto_detect = true;
+    const Classification wrong{"psk8", 0.9, {{"bpsk", 0.05, {}}, {"fsk", 0.02, {}}}};
+    const auto r = run_pipeline(bytes.data(), bytes.size(), "q.iq", o, wrong);
+    CHECK(r.constellation_label == "qpsk");
+    CHECK(r.decode_status == DecodeStatus::Verified);
+    CHECK(r.predicted_modulation == "qpsk");
+    CHECK(r.modulation_from_constellation);
+    CHECK(r.classifier_top_label == "psk8");
+}
+
+TEST_CASE("the constellation line stays silent on genuine FSK, whatever the classifier says") {
+    const auto bytes = read_file(data_path("fsk_plain.iq"));
+    PipelineOptions o;
+    o.sample_rate = 8000.0;
+    o.auto_detect = true;
+    for (const char* label : {"fsk", "qpsk", "bpsk"}) {
+        const auto r = run_pipeline(bytes.data(), bytes.size(), "fsk_plain.iq", o, {label, 0.9});
+        CHECK(r.constellation_label.empty());
+    }
+}
+
+// With four possible carrier rotations, every wrong one used to spend a full Parameter Search (about
+// 4 s on this stream) and the shared 8 s budget ran out before the right one got its turn.
+TEST_CASE("an RRC-shaped QAM16 capture with a carrier offset is recovered and verified") {
+    const std::string message = "REAL WORLD CAPTURE VERIFIED OK, HOLD POSITION AND REPORT STATUS NOW";
+    Bits payload;
+    for (unsigned char ch : message)
+        for (int b = 7; b >= 0; --b) payload.push_back((ch >> b) & 1);
+    const Bits coded = fec_encode(payload, "viterbi");
+    const auto impaired = make_impaired_iq(sigapp::modulate(coded, "qam16"), 8, /*cfo=*/0.004f, /*noise_amp=*/0.02f,
+                                           /*start_offset=*/5, /*noise_seed=*/321);
+    const auto bytes = iq_bytes(impaired);
+    PipelineOptions o;
+    o.sample_rate = 8000.0;
+    o.samples_per_symbol = 8;
+    o.recover_timing = true;
+    o.auto_detect = true;
+    const auto r = run_pipeline(bytes.data(), bytes.size(), "qam16.iq", o, {"qam16", 1.0});
+    CHECK(r.recovery_used);
+    CHECK(r.decode_status == DecodeStatus::Verified);
+    CHECK(r.constellation_label == "qam16");
+}
+
 // A plain, non-repeating message with auto-detect on (now the GUI default) must stay readable:
 // detect_params can score a spurious interleaver on it, which the pipeline must not apply.
 TEST_CASE("auto-detect does not scramble a plain message with a spurious interleaver") {

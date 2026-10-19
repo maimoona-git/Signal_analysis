@@ -92,6 +92,8 @@ constexpr double kMinAlignmentMargin = 0.03;
 constexpr size_t kMaxAutoSearchBits = 300'000;
 constexpr size_t kMaxAutoSearchSamples = 2'000'000;
 // Framing is a handful of linear passes (8 chains), so it can look at far more than the searches can.
+// Between the largest linear value measured (6.2) and the smallest FSK value (8.5).
+constexpr double kMaxSymbolRatePeakiness = 7.5;
 constexpr size_t kMaxFramingBits = 4'000'000;
 
 bool scheme_is_fsk_label(const std::string& label) { return label == "fsk" || label == "FSK"; }
@@ -101,6 +103,30 @@ Bits bytes_to_bits_msb(const std::vector<uint8_t>& bytes) {
     for (size_t i = 0; i < bytes.size(); ++i)
         for (int b = 0; b < 8; ++b) bits[i * 8 + static_cast<size_t>(b)] = (bytes[i] >> (7 - b)) & 1u;
     return bits;
+}
+
+// How well a demodulated stream looks like rate-1/2 convolutionally coded data at some small bit
+// offset: the best re-encode agreement of a plain Viterbi decode over offsets 0..32. A cheap stand-in
+// for "is this the right carrier rotation"; 0 when nothing decodes. Says nothing about other codes.
+double rotation_probe_score(const Bits& bits) {
+    const FecKind* kind = find_fec("viterbi");
+    if (!kind || bits.size() > 20000) return 0.0;
+    double best = 0.0;
+    for (size_t offset = 0; offset <= 32 && offset + 16 < bits.size(); ++offset) {
+        const Bits stream(bits.begin() + static_cast<long>(offset), bits.end());
+        const auto msg_len = kind->msg_len_for(stream.size());
+        if (!msg_len) continue;
+        try {
+            const Bits decoded = kind->decode(stream, *msg_len);
+            const Bits re = kind->encode(decoded);
+            const size_t n = std::min(re.size(), stream.size());
+            size_t same = 0;
+            for (size_t i = 0; i < n; ++i) same += (re[i] == stream[i]);
+            if (n > 0) best = std::max(best, static_cast<double>(same) / static_cast<double>(n));
+        } catch (const std::exception&) {
+        }
+    }
+    return best;
 }
 
 Analysis analyze_samples(const std::vector<std::complex<float>>& samples_for_demod, const std::string& scheme,
@@ -456,6 +482,21 @@ PipelineResult pipeline_finish(PipelinePrep prep, const Classification& classifi
 
 static PipelineResult pipeline_finish_impl(PipelinePrep prep, const Classification& classification,
                                            const PipelineOptions& options) {
+    // Constellation check on raw samples that are already one per symbol. Only when the spectrum is
+    // flat, as symbol-rate linear data is: oversampled FSK (peakiness 8.5 and up, against 6.2 at most
+    // for BPSK to QAM64) would otherwise be read as some PSK. The classifier's label is not used for
+    // this, since "fsk" is exactly what it says for most of the linear signals it gets wrong.
+    if (!prep.constellation_checked) {
+        prep.constellation_checked = true;
+        if (options.samples_per_symbol <= 1 && prep.signal.samples.size() >= 100 &&
+            prep.signal.num_samples <= kMaxAutoSearchSamples && sigcore::spectral_peakiness(prep.signal.samples) < kMaxSymbolRatePeakiness) {
+            const sigcore::ConstellationCheck cc = sigcore::constellation_check(prep.signal.samples);
+            prep.constellation_label = cc.best;
+            prep.constellation_c40 = cc.c40;
+            prep.constellation_c42 = cc.c42;
+        }
+    }
+
     // The classifier's most common real-world mistake: calling a real BPSK recording "fsk" (all ten
     // CPSat recordings, 90-99% confidence). If the label is "fsk" but the raw samples fail the blind
     // FSK tests and show a linear family's signature (core/include/modulation_blind.hpp), analyse
@@ -491,7 +532,16 @@ static PipelineResult pipeline_finish_impl(PipelinePrep prep, const Classificati
             // everything that verifies, prefer the one yielding the fewest bits per sample
             // (Occam), not merely the classifier's runner-up order.
             std::optional<PipelineResult> chosen;
-            for (const auto& alt : classification.alternatives) {
+            // The constellation check's reading goes first when it disagrees with the label just tried.
+            std::vector<Classification> order = classification.alternatives;
+            const bool have_cc = !best.constellation_label.empty() && best.constellation_label != top.label;
+            if (have_cc) {
+                order.erase(std::remove_if(order.begin(), order.end(),
+                                           [&](const Classification& c) { return c.label == best.constellation_label; }),
+                            order.end());
+                order.insert(order.begin(), Classification{best.constellation_label, 0.0, {}});
+            }
+            for (const auto& alt : order) {
                 if (options.deadline && std::chrono::steady_clock::now() > *options.deadline) break;
                 try {
                     Classification c{alt.label, alt.confidence, {}};
@@ -507,6 +557,7 @@ static PipelineResult pipeline_finish_impl(PipelinePrep prep, const Classificati
             if (chosen) {
                 chosen->modulation_from_search = true;
                 chosen->classifier_top_label = classification.label;
+                chosen->modulation_from_constellation = have_cc && chosen->predicted_modulation == best.constellation_label;
                 return *chosen;
             }
         }
@@ -665,6 +716,19 @@ static PipelineResult pipeline_finish_impl(PipelinePrep prep, const Classificati
         samples_for_demod = &processed;
     }
 
+    // Constellation check: the up-front one on raw 1-sample/symbol input, else on the recovered
+    // symbol-rate samples (carrier offset already removed).
+    if (!prep.constellation_label.empty()) {
+        result.constellation_label = prep.constellation_label;
+        result.constellation_c40 = prep.constellation_c40;
+        result.constellation_c42 = prep.constellation_c42;
+    } else if (scheme != "fsk" && result.recovery_used && samples_for_demod->size() >= 100) {
+        const sigcore::ConstellationCheck cc = sigcore::constellation_check(*samples_for_demod);
+        result.constellation_label = cc.best;
+        result.constellation_c40 = cc.c40;
+        result.constellation_c42 = cc.c42;
+    }
+
     // Gap-list Phase 1.4: everything from demodulation through decode_status depends
     // only on `samples_for_demod` (plus scheme/options, both fixed for this run) --
     // pulled into its own function so it can be run more than once, below, on
@@ -674,11 +738,42 @@ static PipelineResult pipeline_finish_impl(PipelinePrep prep, const Classificati
     // equally-valid constant phase offsets, with nothing in the signal itself to say
     // which one is upright). A single call, on the unrotated samples, is exactly the
     // original, single-candidate behaviour.
-    const Analysis analysis = analyze_samples(*samples_for_demod, scheme, options, result.recovery_used);
-
     const unsigned int ambiguity = result.recovery_phase_ambiguity.value_or(1);
+
+    // Each analysis can run a full Parameter Search (seconds on a few thousand bits), and the wrong
+    // rotations only ever fail after using their whole share of the time budget -- with four
+    // rotations the right one can be left with none. A cheap probe (plain Viterbi at each bit offset,
+    // no interleaver) says which rotation to try first; if that one verifies the others are skipped.
+    std::optional<Analysis> preferred_result;
+    if (result.recovery_used && ambiguity > 1 && options.auto_detect && !options.fec_scheme && !options.interleaver) {
+        unsigned int preferred = 0;
+        double best_score = rotation_probe_score(demodulate(*samples_for_demod, scheme, options.demod));
+        const double unrotated_score = best_score;
+        for (unsigned int k = 1; k < ambiguity; ++k) {
+            const double angle = 2.0 * M_PI * static_cast<double>(k) / static_cast<double>(ambiguity);
+            const std::complex<float> rot(static_cast<float>(std::cos(angle)), static_cast<float>(std::sin(angle)));
+            std::vector<std::complex<float>> rotated(samples_for_demod->size());
+            for (size_t i = 0; i < rotated.size(); ++i) rotated[i] = (*samples_for_demod)[i] * rot;
+            const double score = rotation_probe_score(demodulate(rotated, scheme, options.demod));
+            if (score > best_score) {
+                best_score = score;
+                preferred = k;
+            }
+        }
+        if (preferred != 0 && best_score >= 0.95 && unrotated_score < 0.95) {
+            const double angle = 2.0 * M_PI * static_cast<double>(preferred) / static_cast<double>(ambiguity);
+            const std::complex<float> rot(static_cast<float>(std::cos(angle)), static_cast<float>(std::sin(angle)));
+            std::vector<std::complex<float>> rotated(samples_for_demod->size());
+            for (size_t i = 0; i < rotated.size(); ++i) rotated[i] = (*samples_for_demod)[i] * rot;
+            Analysis first = analyze_samples(rotated, scheme, options, result.recovery_used);
+            if (first.decode_status == DecodeStatus::Verified) preferred_result = std::move(first);
+        }
+    }
+
+    const Analysis analysis = preferred_result ? *preferred_result : analyze_samples(*samples_for_demod, scheme, options, result.recovery_used);
+
     Analysis best = analysis;
-    if (result.recovery_used && ambiguity > 1) {
+    if (result.recovery_used && ambiguity > 1 && !preferred_result) {
         for (unsigned int k = 1; k < ambiguity; ++k) {
             const double angle = 2.0 * M_PI * static_cast<double>(k) / static_cast<double>(ambiguity);
             const std::complex<float> rot(static_cast<float>(std::cos(angle)), static_cast<float>(std::sin(angle)));

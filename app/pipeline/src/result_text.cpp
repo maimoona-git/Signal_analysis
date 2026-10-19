@@ -128,6 +128,11 @@ std::string format_result_text(const PipelineResult& r, size_t max_message_chars
              printf_string("%.2f", r.blind_envelope_cv) + ", squared-signal line " + printf_string("%.2f", r.blind_line) +
              "); analysed as " + r.predicted_modulation);
     }
+    if (show_decode_status && !r.constellation_label.empty()) {
+        line("Constellation check:  reads as " + r.constellation_label + " (|C40| " + printf_string("%.2f", r.constellation_c40) +
+             ", C42 " + printf_string("%.2f", r.constellation_c42) + ")" +
+             (r.modulation_from_constellation ? "; this is the reading that verified" : ""));
+    }
     if (show_decode_status && r.modulation_from_search) {
         line("Modulation search:    classifier's top guess was " + r.classifier_top_label +
              "; " + r.predicted_modulation + " is the one that verified");
@@ -315,6 +320,12 @@ std::string format_result_json(const PipelineResult& r) {
     field("modulation", jstr(r.predicted_modulation));
     field("modulation_confidence", jnum(r.predicted_confidence));
     if (r.modulation_from_search || r.modulation_from_blind_check) field("classifier_top_label", jstr(r.classifier_top_label));
+    if (!r.constellation_label.empty()) {
+        field("constellation_label", jstr(r.constellation_label));
+        field("constellation_c40", jnum(r.constellation_c40));
+        field("constellation_c42", jnum(r.constellation_c42));
+        if (r.modulation_from_constellation) field("modulation_from_constellation", "true");
+    }
     if (r.modulation_from_blind_check) {
         field("modulation_from_blind_check", "true");
         field("blind_envelope_cv", jnum(r.blind_envelope_cv));

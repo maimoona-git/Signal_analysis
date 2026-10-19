@@ -1284,6 +1284,7 @@ TEST_CASE("main window: the panel shows exactly what the ORIGINAL GUI showed for
         "Spectrogram shape:    (5, 256)\n"
         "\n"
         "Predicted modulation: bpsk (confidence 1.00)\n"
+        "Constellation check:  reads as bpsk (|C40| 2.00, C42 -2.00)\n"
         "Demodulated bits:     128\n"
         "Samples/symbol used:  4\n"
         "Symbol-rate estimate: 4.0 samples/symbol (confidence 1.00)\n"

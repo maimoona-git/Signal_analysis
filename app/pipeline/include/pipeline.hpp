@@ -256,6 +256,12 @@ struct PipelinePrep {
 
     SampleRateSource sample_rate_source = SampleRateSource::AssumedDefault;
     size_t file_total_samples = 0;
+
+    // sigcore::constellation_check of the raw samples when they are already one per symbol and the
+    // signal does not look like FSK; computed once by pipeline_finish_impl.
+    bool constellation_checked = false;
+    std::string constellation_label;
+    double constellation_c40 = 0.0, constellation_c42 = 0.0;
     size_t window_start_samples = 0;
     std::optional<double> center_freq_hz;  // SigMF core:frequency, when a sidecar gave one
     bool iq_format_guessed = false;
@@ -391,6 +397,13 @@ struct PipelineResult {
     bool modulation_from_blind_check = false;
     double blind_line = 0.0;
     double blind_envelope_cv = 0.0;
+    // sigcore::constellation_check on the symbol-rate samples that were demodulated (only with timing
+    // recovery on, or 1 sample/symbol, where the carrier offset is already removed): the modulation
+    // order read from fourth-order cumulants. Empty when it did not run. When the classifier's label
+    // did not verify, this label is tried first (modulation_from_constellation says it was the one used).
+    std::string constellation_label;
+    double constellation_c40 = 0.0, constellation_c42 = 0.0;
+    bool modulation_from_constellation = false;
 
     // Gap-list Phase 2.2: set when an alternative (not the classifier's top) label was
     // the one that verified; classifier_top_label then says what the top guess was.

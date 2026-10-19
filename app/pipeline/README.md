@@ -434,3 +434,45 @@ the length valid for a scheme (not when an interleaver is involved). Measured on
 overall and 8PSK from 0% to 57%. The classifier's top guess was right in only 28% of them; trying every
 modulation without it gave the same 66%, so the final answer comes from the decode check, not the label. One
 of 240 captures verified under a wrong modulation in that try-everything mode.
+
+### Dense constellations through timing and carrier recovery
+
+Realistic captures (RRC pulse, 8 samples/symbol, a carrier offset, 12 trials per modulation at 15-30 dB
+per-sample SNR) decoded as follows, before and after the changes below:
+
+| | BPSK | QPSK | 8-PSK | QAM16 | QAM64 |
+| --- | --- | --- | --- | --- | --- |
+| before | 12 | 11 | 1 | 8 | 6 |
+| after | 12 | 11 | 12 | 12 | 10 |
+
+Causes, all in `core/src/recover.cpp` and `pipeline.cpp`: the 8-PSK carrier-offset estimate used the 4th
+power (it needs the 8th); only 4 of 8 phase rotations were tried for 8-PSK; the default carrier-loop
+bandwidth (0.02) slipped cycles on 8-PSK (0.001 holds lock); the symbol-timing loop spent the first few
+hundred symbols settling, corrupting the start of a short capture (now run once over the first 256 symbols
+and restarted); QAM is tracked with a feed-forward 4th-power phase estimate over a 64-symbol window instead
+of the decision-directed loop, and normalised to unit power; and the four rotations each ran a full
+Parameter Search of about 4 s against an 8 s budget, so the right one was often never reached (a cheap Viterbi
+probe now picks the likely rotation first). Synthetic captures only, not real recordings.
+
+Decode rate with the right modulation forced, on clean 1-sample/symbol captures, is set by noise as expected
+for coded high-order modulation: QAM64 needs about 25 dB, QAM16 about 15 dB, 8PSK about 10 dB.
+
+### Constellation check (modulation order from the symbols)
+
+`sigcore::constellation_check` (`core/src/modulation_blind.cpp`) reads BPSK / QPSK / 8-PSK / QAM16 / QAM64
+from the symbols themselves, which the spectrogram classifier cannot see (their spectra are alike). Phase-only
+schemes are told apart by fourth-order cumulants (|C40|, C42 against 2/-2, 1/-1, 0/-1, scaled by the signal
+share read from the fourth moment). A noisy QPSK and a clean QAM16 have the same cumulants of every order, so
+one ring against the QAM ring structures is decided by the likelihood of the symbol magnitudes (Rician noise,
+signal share fitted) instead. It needs symbol-rate samples with the carrier offset removed: raw input at 1
+sample/symbol, or the output of timing recovery. At 1 sample/symbol it only runs when the spectrum is flat
+(`spectral_peakiness` < 7.5): symbol-rate linear data measured 1.3-6.2, oversampled FSK 8.5-14, and without
+that gate 27 of 40 FSK captures were read as QPSK.
+
+On 240 synthetic 1-sample/symbol captures (6 modulations x 5 SNRs x 8) the panel's "Constellation check" line
+is right for 79% of the 200 non-FSK captures (BPSK 100%, QPSK 95%, 8-PSK 85%, QAM16 57%, QAM64 62%; 100% for
+all at 25 dB), against 14% for the classifier's top guess, and silent on all 40 FSK captures. When the
+classifier's label does not verify, this reading is tried first, ahead of its runner-up labels. It does not
+change how many captures decode (66% either way: the retries already reach the right modulation), and the
+"Predicted modulation" line is still the label that was used. QAM16 against QAM64 is the weak point at low SNR
+and few symbols (about 140 symbols in these captures).

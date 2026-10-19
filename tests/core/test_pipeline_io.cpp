@@ -150,6 +150,10 @@ PipelineResult full_result() {
     p.modulation_from_blind_check = true;
     p.blind_line = 0.61;
     p.blind_envelope_cv = 0.57;
+    p.constellation_label = "qam16";
+    p.constellation_c40 = 0.66;
+    p.constellation_c42 = -0.7;
+    p.modulation_from_constellation = true;
     return p;
 }
 
@@ -309,6 +313,10 @@ TEST_CASE("PipelineResult: every field survives a round trip") {
     CHECK(r.modulation_from_blind_check == p.modulation_from_blind_check);
     CHECK(r.blind_line == p.blind_line);
     CHECK(r.blind_envelope_cv == p.blind_envelope_cv);
+    CHECK(r.constellation_label == p.constellation_label);
+    CHECK(r.constellation_c40 == p.constellation_c40);
+    CHECK(r.constellation_c42 == p.constellation_c42);
+    CHECK(r.modulation_from_constellation == p.modulation_from_constellation);
     // belt and braces: re-serializing the copy gives the same bytes, so nothing was dropped
     CHECK(serialize_result(r) == bytes);
 }

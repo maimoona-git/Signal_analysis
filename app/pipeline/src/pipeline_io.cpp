@@ -378,6 +378,10 @@ std::vector<uint8_t> serialize_result(const PipelineResult& p) {
     w.b(p.modulation_from_blind_check);
     w.pod(p.blind_line);
     w.pod(p.blind_envelope_cv);
+    w.str(p.constellation_label);
+    w.pod(p.constellation_c40);
+    w.pod(p.constellation_c42);
+    w.b(p.modulation_from_constellation);
     return std::move(w.out);
 }
 
@@ -499,6 +503,10 @@ PipelineResult deserialize_result(const uint8_t* data, size_t size) {
     p.modulation_from_blind_check = r.b();
     p.blind_line = r.pod<double>();
     p.blind_envelope_cv = r.pod<double>();
+    p.constellation_label = r.str();
+    p.constellation_c40 = r.pod<double>();
+    p.constellation_c42 = r.pod<double>();
+    p.modulation_from_constellation = r.b();
     r.finish();
     return p;
 }

@@ -1,5 +1,6 @@
 #include "recover.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <stdexcept>
@@ -120,6 +121,15 @@ std::vector<std::complex<float>> integrate_and_dump(const std::vector<std::compl
     return out;
 }
 
+// Measured: 0.0005-0.002 holds lock on 8-PSK at 20-30 dB; 0.003 and up slip cycles mid-stream.
+constexpr size_t kPrerollSymbols = 256;
+constexpr size_t kQamPhaseWindow = 64;
+
+bool is_square_qam(ModulationScheme s) {
+    return s == ModulationScheme::QAM16 || s == ModulationScheme::QAM64 || s == ModulationScheme::QAM256;
+}
+constexpr float kPsk8LoopBandwidth = 0.001f;
+
 }  // namespace
 
 RecoveryResult recover_linear(const std::vector<std::complex<float>>& raw, unsigned int sps,
@@ -136,7 +146,8 @@ RecoveryResult recover_linear(const std::vector<std::complex<float>>& raw, unsig
     const unsigned int m_power = (bps <= 1) ? 2u : 4u;  // see estimate_coarse_cfo's comment
 
     // 1. Coarse CFO: get the loop below within its capture range.
-    const float coarse_cfo = estimate_coarse_cfo(raw, m_power);
+    // 8-PSK needs the 8th power: its 4th power collapses to a +/-1 (BPSK-like) signal with no carrier line.
+    const float coarse_cfo = estimate_coarse_cfo(raw, scheme == ModulationScheme::PSK8 ? 8u : m_power);
     const auto mixed = mix_by(raw, coarse_cfo);
 
     // 2. Timing recovery. Rrc: an RRC-matched polyphase symbol synchronizer, which
@@ -156,6 +167,16 @@ RecoveryResult recover_linear(const std::vector<std::complex<float>>& raw, unsig
 
         timed.resize(mixed.size());
         unsigned int n_written = 0;
+        // The timing loop needs a few hundred symbols to settle, which corrupts the start of a short
+        // capture; the dense constellations cannot tolerate that. Run it over the first stretch once
+        // (output discarded), then feed the capture from the start with the settled loop.
+        if (scheme == ModulationScheme::PSK8 || is_square_qam(scheme)) {
+            const size_t pre = std::min<size_t>(mixed.size(), static_cast<size_t>(sps) * kPrerollSymbols);
+            std::vector<std::complex<float>> scratch(pre + 16);
+            unsigned int scratch_written = 0;
+            symsync_crcf_execute(sync, const_cast<liquid_float_complex*>(as_liquid(const_cast<std::complex<float>*>(mixed.data()))),
+                                 static_cast<unsigned int>(pre), as_liquid(scratch.data()), &scratch_written);
+        }
         symsync_crcf_execute(sync, const_cast<liquid_float_complex*>(as_liquid(const_cast<std::complex<float>*>(mixed.data()))),
                              static_cast<unsigned int>(mixed.size()), as_liquid(timed.data()), &n_written);
         timed.resize(n_written);
@@ -164,14 +185,44 @@ RecoveryResult recover_linear(const std::vector<std::complex<float>>& raw, unsig
         timed = integrate_and_dump(mixed, sps);
     }
 
+    // 2b. Amplitude. The matched filter's gain is not exactly unity, and QAM decides on amplitude as
+    // well as phase, so scale to the unit average power every constellation here is defined with.
+    // (Constant-modulus schemes are unaffected by a gain error, so they are left alone.)
+    if (scheme == ModulationScheme::QAM16 || scheme == ModulationScheme::QAM32 || scheme == ModulationScheme::QAM64 ||
+        scheme == ModulationScheme::QAM128 || scheme == ModulationScheme::QAM256) {
+        double power = 0.0;
+        for (const auto& v : timed) power += std::norm(v);
+        power /= static_cast<double>(std::max<size_t>(1, timed.size()));
+        if (power > 0.0) {
+            const float gain = static_cast<float>(1.0 / std::sqrt(power));
+            for (auto& v : timed) v *= gain;
+        }
+    }
+
     // 3. Fine carrier/phase tracking: a decision-directed Costas loop, using the same
     // modem object's own phase-error estimate (liquid's standard technique) to steer
     // an NCO, symbol by symbol, correcting whatever coarse step 1 left behind plus any
     // slow phase drift across the capture.
     nco_crcf carrier = nco_crcf_create(LIQUID_VCO);
-    nco_crcf_pll_set_bandwidth(carrier, 0.02f);
+    // 8-PSK's decision regions are narrow: the 0.02 used for the other schemes is too noisy and slips.
+    nco_crcf_pll_set_bandwidth(carrier, scheme == ModulationScheme::PSK8 ? kPsk8LoopBandwidth : 0.02f);
 
     std::vector<std::complex<float>> tracked(timed.size());
+    // The decision-directed loop needs a few hundred symbols to pull in, which leaves the start of a
+    // short capture wrong and fails FEC verification. For 8-PSK, run
+    // it over the first symbols once to lock (8-PSK; QAM uses the feed-forward estimator below), then restart from symbol 0 keeping the locked state.
+    const bool preroll = scheme == ModulationScheme::PSK8;
+    if (preroll) {
+        const size_t n = std::min<size_t>(timed.size(), kPrerollSymbols);
+        for (size_t i = 0; i < n; ++i) {
+            std::complex<float> corrected;
+            nco_crcf_mix_down(carrier, *as_liquid(&timed[i]), as_liquid(&corrected));
+            unsigned int symbol = 0;
+            modemcf_demodulate(mod, *as_liquid(&corrected), &symbol);
+            nco_crcf_pll_step(carrier, modemcf_get_demodulator_phase_error(mod));
+            nco_crcf_step(carrier);
+        }
+    }
     for (size_t i = 0; i < timed.size(); ++i) {
         std::complex<float> corrected;
         nco_crcf_mix_down(carrier, *as_liquid(&timed[i]), as_liquid(&corrected));
@@ -185,10 +236,43 @@ RecoveryResult recover_linear(const std::vector<std::complex<float>>& raw, unsig
     nco_crcf_destroy(carrier);
     modemcf_destroy(mod);
 
+    if (is_square_qam(scheme)) {
+        // Feed-forward carrier phase for QAM: a decision-directed loop is unreliable on dense
+        // constellations (wrong decisions steer it), so estimate the phase from s^4 instead. Square
+        // QAM has E[s^4] real and negative (cumulant -0.68 for QAM16, -0.62 for QAM64), so
+        // arg(sum s^4) = pi + 4*theta over a sliding window; the 4-fold ambiguity is left to the
+        // caller's rotation search, exactly as with the loop.
+        const size_t n = timed.size();
+        const long half = static_cast<long>(kQamPhaseWindow / 2);
+        std::vector<std::complex<double>> prefix(n + 1);
+        for (size_t i = 0; i < n; ++i) {
+            const std::complex<double> v(timed[i].real(), timed[i].imag());
+            const std::complex<double> v2 = v * v;
+            prefix[i + 1] = prefix[i] + v2 * v2;
+        }
+        double prev = 0.0;
+        bool first = true;
+        for (size_t i = 0; i < n; ++i) {
+            const size_t lo = static_cast<size_t>(std::max<long>(0, static_cast<long>(i) - half));
+            const size_t hi = static_cast<size_t>(std::min<long>(static_cast<long>(n), static_cast<long>(i) + half + 1));
+            double phi = std::arg(prefix[hi] - prefix[lo]) - M_PI;  // = 4 * theta (mod 2 pi)
+            if (!first) {
+                while (phi - prev > M_PI) phi -= 2.0 * M_PI;
+                while (phi - prev < -M_PI) phi += 2.0 * M_PI;
+            }
+            first = false;
+            prev = phi;
+            const double theta = phi / 4.0;
+            tracked[i] = timed[i] * std::complex<float>(static_cast<float>(std::cos(-theta)), static_cast<float>(std::sin(-theta)));
+        }
+    }
+
     RecoveryResult result;
     result.samples = std::move(tracked);
     result.coarse_cfo_cycles_per_sample = coarse_cfo;
-    result.phase_ambiguity_count = m_power;
+    // The CFO estimator above uses M=4 for anything past BPSK, but the carrier loop's own lock
+    // ambiguity is the constellation's true rotational symmetry: 8 for 8-PSK.
+    result.phase_ambiguity_count = (scheme == ModulationScheme::PSK8) ? 8u : m_power;
     return result;
 }
 

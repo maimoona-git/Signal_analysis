@@ -135,4 +135,79 @@ TEST_CASE("noise, tiny and degenerate inputs are inconclusive, never an error") 
     CHECK(blind_linear_check(std::vector<cf>(5000, cf(0, 0))).family.empty());
 }
 
+// --- constellation check -------------------------------------------------------------------------
+
+namespace {
+// Random symbols of the named constellation, unit average power, with AWGN at `snr_db` and an
+// arbitrary carrier phase.
+std::vector<cf> symbol_stream(const std::string& name, size_t n, double snr_db, double phase, std::mt19937& rng) {
+    std::vector<cf> pts;
+    if (name == "bpsk") pts = {{1, 0}, {-1, 0}};
+    else if (name == "qpsk") pts = {{1, 1}, {-1, 1}, {1, -1}, {-1, -1}};
+    else if (name == "psk8") for (int k = 0; k < 8; ++k) pts.push_back(std::polar(1.0f, static_cast<float>(k * M_PI / 4)));
+    else {
+        const int side = name == "qam16" ? 4 : 8;
+        for (int i = 0; i < side; ++i)
+            for (int q = 0; q < side; ++q) pts.push_back({static_cast<float>(2 * i - side + 1), static_cast<float>(2 * q - side + 1)});
+    }
+    double p = 0;
+    for (auto& v : pts) p += std::norm(v);
+    p /= static_cast<double>(pts.size());
+    std::vector<cf> x(n);
+    const double sigma = std::sqrt(1.0 / std::pow(10.0, snr_db / 10.0) / 2.0);
+    std::normal_distribution<float> g;
+    for (auto& v : x) {
+        const cf s = pts[rng() % pts.size()] / static_cast<float>(std::sqrt(p));
+        v = s * std::polar(1.0f, static_cast<float>(phase)) + cf(static_cast<float>(sigma) * g(rng), static_cast<float>(sigma) * g(rng));
+    }
+    return x;
+}
+}  // namespace
+
+TEST_CASE("constellation check reads BPSK, QPSK and 8-PSK from fourth-order cumulants, at any carrier phase") {
+    std::mt19937 rng(11);
+    for (const char* name : {"bpsk", "qpsk", "psk8"}) {
+        int hits = 0;
+        for (int trial = 0; trial < 20; ++trial) {
+            const auto x = symbol_stream(name, 800, 15.0, 0.37 * trial, rng);
+            hits += constellation_check(x).best == name;
+        }
+        CHECK(hits >= 19);
+    }
+}
+
+TEST_CASE("constellation check puts the QAM orders in the QAM family, never in a PSK") {
+    std::mt19937 rng(12);
+    for (const char* name : {"qam16", "qam64"}) {
+        int qam = 0, exact = 0;
+        for (int trial = 0; trial < 20; ++trial) {
+            const auto x = symbol_stream(name, 4000, 25.0, 0.5, rng);
+            const auto c = constellation_check(x);
+            qam += (c.best == "qam16" || c.best == "qam64");
+            exact += (c.best == name);
+        }
+        CHECK(qam >= 18);
+        CHECK(exact >= 12);  // order itself is the hard part; see the header comment
+    }
+}
+
+TEST_CASE("spectral peakiness separates symbol-rate linear data from oversampled FSK") {
+    std::mt19937 rng(21);
+    for (const char* name : {"bpsk", "qpsk", "psk8", "qam16", "qam64"})
+        for (double snr : {25.0, 6.0}) CHECK(spectral_peakiness(symbol_stream(name, 600, snr, 0.3, rng)) < 7.5);
+    int peaky = 0;
+    for (int trial = 0; trial < 20; ++trial) {
+        auto x = fsk_modulate(random_bits_u8(600, rng), 1, 8, 0.2f);
+        peaky += spectral_peakiness(x) > 7.5;
+    }
+    CHECK(peaky >= 19);
+    CHECK(spectral_peakiness({}) == 0.0);
+}
+
+TEST_CASE("constellation check is inconclusive on too little or empty input") {
+    CHECK(constellation_check({}).best.empty());
+    CHECK(constellation_check(std::vector<cf>(50, cf(1, 0))).best.empty());
+    CHECK(constellation_check(std::vector<cf>(500, cf(0, 0))).best.empty());
+}
+
 TEST_MAIN()
