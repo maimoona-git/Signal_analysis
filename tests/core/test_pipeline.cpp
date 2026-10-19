@@ -993,6 +993,27 @@ TEST_CASE("Parameter Search finds the new FEC schemes through the pipeline") {
     }
 }
 
+// The demodulator pads its last symbol, so an 8PSK/QAM64 stream is a few bits longer than the code
+// word (813 bits for a 812-bit Viterbi word): Parameter Search must still find the code.
+TEST_CASE("Parameter Search finds a code whose stream was padded by a high-order demodulator") {
+    Rng rng(77);
+    for (const char* mod : {"psk8", "qam64", "qam16"}) {
+        Bits payload;
+        for (unsigned i = 0; i < 400; ++i) payload.push_back(static_cast<uint8_t>((rng.next() >> 33) & 1));
+        const Bits coded = fec_encode(payload, "viterbi");
+        const auto bytes = iq_bytes(sigapp::modulate(coded, mod));
+        PipelineOptions o;
+        o.sample_rate = 8000.0;
+        o.auto_detect = true;
+        const auto r = run_pipeline(bytes.data(), bytes.size(), "x.iq", o, {mod, 1.0});
+        CHECK(r.decode_status == DecodeStatus::Verified);
+        CHECK(r.detected_fec == std::optional<std::string>("viterbi"));
+        CHECK(r.decoded_bits.has_value());
+        if (r.decoded_bits && r.decoded_bits->size() >= payload.size())
+            CHECK(Bits(r.decoded_bits->begin(), r.decoded_bits->begin() + static_cast<long>(payload.size())) == payload);
+    }
+}
+
 // A plain, non-repeating message with auto-detect on (now the GUI default) must stay readable:
 // detect_params can score a spurious interleaver on it, which the pipeline must not apply.
 TEST_CASE("auto-detect does not scramble a plain message with a spurious interleaver") {

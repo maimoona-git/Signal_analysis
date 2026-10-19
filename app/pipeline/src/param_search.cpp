@@ -12,6 +12,20 @@ namespace sigapp {
 
 namespace {
 
+// A demodulator pads its last symbol (8PSK, QAM64, ... carry 3-6 bits per symbol), so a stream can
+// be up to 7 bits longer than the code word. Returns `bits` cut back to the shortest padding for
+// which `fec` implies `msg_len`; unchanged when the exact length already does. Used only when no
+// interleaver is involved: a de-interleaved stream's length is not a padding artefact.
+Bits trim_padding(const Bits& bits, const std::string& fec, size_t msg_len) {
+    const FecKind* kind = find_fec(fec);
+    if (!kind) return bits;
+    for (size_t pad = 0; pad <= 7 && pad < bits.size(); ++pad)
+        if (kind->msg_len_for(bits.size() - pad) == std::optional<size_t>(msg_len))
+            return Bits(bits.begin(), bits.end() - static_cast<long>(pad));
+    return bits;
+}
+
+
 
 
 
@@ -104,14 +118,20 @@ ParamSearchResult search_params(const Bits& bits_in, const ParamSearchOptions& o
 
             for (const FecKind& kind : fec_kinds()) {
                 const char* fec = kind.name.c_str();
-                const auto msg_len = kind.msg_len_for(deinterleaved.size());
+                // A demodulator pads its last symbol (8PSK, QAM64, ... carry 3-6 bits per symbol), so the
+                // stream can be a few bits longer than the code word: if the exact length is not valid
+                // for this scheme, accept the length reached by ignoring up to 7 trailing bits.
+                std::optional<size_t> msg_len = kind.msg_len_for(deinterleaved.size());
+                for (size_t pad = 1; !interleaver.has_value() && !msg_len.has_value() && pad <= 7 && pad < deinterleaved.size(); ++pad)
+                    msg_len = kind.msg_len_for(deinterleaved.size() - pad);
                 if (!msg_len.has_value()) continue;
                 try {
-                    const Bits decoded = fec_decode(deinterleaved, fec, *msg_len);
+                    const Bits coded_part = interleaver.has_value() ? deinterleaved : trim_padding(deinterleaved, fec, *msg_len);
+                    const Bits decoded = fec_decode(coded_part, fec, *msg_len);
                     const Bits re_encoded = fec_encode(decoded, fec);
-                    const size_t n = std::min(re_encoded.size(), deinterleaved.size());
+                    const size_t n = std::min(re_encoded.size(), coded_part.size());
                     size_t matches = 0;
-                    for (size_t i = 0; i < n; ++i) matches += (re_encoded[i] == deinterleaved[i]);
+                    for (size_t i = 0; i < n; ++i) matches += (re_encoded[i] == coded_part[i]);
                     const double agreement = n > 0 ? static_cast<double>(matches) / n : 0.0;
 
                     ParamCandidate c;
@@ -159,7 +179,7 @@ Bits decode_candidate(const Bits& bits, const ParamCandidate& candidate) {
         }
     }
     if (candidate.fec.has_value()) {
-        working = fec_decode(working, *candidate.fec, *candidate.fec_msg_len);
+        working = fec_decode(candidate.interleaver.has_value() ? working : trim_padding(working, *candidate.fec, *candidate.fec_msg_len), *candidate.fec, *candidate.fec_msg_len);
     }
     return working;
 }
@@ -180,8 +200,9 @@ double alignment_margin(const Bits& bits, const ParamCandidate& candidate) {
         }
     }
     if (working.size() < 8) return 0.0;
-    auto agreement = [&](const Bits& w) {
+    auto agreement = [&](const Bits& wide) {
         try {
+            const Bits w = candidate.interleaver.has_value() ? wide : trim_padding(wide, *candidate.fec, *candidate.fec_msg_len);
             const Bits decoded = fec_decode(w, *candidate.fec, *candidate.fec_msg_len);
             const Bits re = fec_encode(decoded, *candidate.fec);
             const size_t n = std::min(re.size(), w.size());

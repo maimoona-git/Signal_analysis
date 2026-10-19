@@ -424,3 +424,13 @@ block and refuses 17+. It is searched by Parameter Search only (not by the origi
 The older `rs255` scheme is the common conventional-basis RS(255,223) over 0x11D, *not* the CCSDS code.
 **Not implemented:** the standard's interleaving depth, pseudo-randomiser and sync marker, so a real
 CCSDS downlink needs those undone first. No real CCSDS recording was available to try it on.
+
+### Padded streams from high-order demodulators
+
+8PSK and QAM64 carry 3 and 6 bits per symbol, so the demodulator pads the last symbol and the stream can be up
+to 7 bits longer than the code word. Parameter Search now ignores up to 7 trailing bits when that is what makes
+the length valid for a scheme (not when an interleaver is involved). Measured on 240 synthetic captures
+(6 modulations x 5 SNRs x 8, Viterbi-coded, 1 sample/symbol): verified-and-correct decodes went from 57% to 66%
+overall and 8PSK from 0% to 57%. The classifier's top guess was right in only 28% of them; trying every
+modulation without it gave the same 66%, so the final answer comes from the decode check, not the label. One
+of 240 captures verified under a wrong modulation in that try-everything mode.
