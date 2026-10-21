@@ -132,6 +132,7 @@ val state() {
     }
     s.set("nextWindowEnabled", g_window->nextWindowAction()->isEnabled());
     s.set("previousWindowEnabled", g_window->previousWindowAction()->isEnabled());
+    s.set("streamStartByte", static_cast<double>(g_window->streamStartByte()));
     controls.set("autoDetect", point(w, g_window->autoDetectCheckBox()));
     controls.set("sampleRate", point(w, g_window->sampleRateEdit()));
     controls.set("samplesPerSymbol", point(w, g_window->samplesPerSymbolSpinBox()));

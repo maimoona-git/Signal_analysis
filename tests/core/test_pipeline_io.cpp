@@ -124,7 +124,8 @@ PipelineResult full_result() {
     p.param_search_used = true;
     p.param_search_bit_offset = 13;
     p.param_search_confidence = 0.91;
-    p.auto_search_skipped = true;
+    p.auto_window_total_samples = 3000000;
+    p.auto_window_total_bits = 450000;
     p.modulation_from_search = true;
     p.classifier_top_label = "psk8";
     p.pulse_shape_searched = true;
@@ -290,7 +291,8 @@ TEST_CASE("PipelineResult: every field survives a round trip") {
     CHECK(r.param_search_used == p.param_search_used);
     CHECK(r.param_search_bit_offset == p.param_search_bit_offset);
     CHECK(r.param_search_confidence == p.param_search_confidence);
-    CHECK(r.auto_search_skipped == p.auto_search_skipped);
+    CHECK(r.auto_window_total_samples == p.auto_window_total_samples);
+    CHECK(r.auto_window_total_bits == p.auto_window_total_bits);
     CHECK(r.modulation_from_search == p.modulation_from_search);
     CHECK(r.classifier_top_label == p.classifier_top_label);
     CHECK(r.pulse_shape_searched == p.pulse_shape_searched);

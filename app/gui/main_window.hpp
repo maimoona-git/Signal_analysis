@@ -70,6 +70,8 @@ public:
     void setWindowStepper(std::function<void(int)> stepper) { window_stepper_ = std::move(stepper); }
     QAction* previousWindowAction() const { return prev_window_action_; }
     QAction* nextWindowAction() const { return next_window_action_; }
+    // Byte offset of the loaded window within a streamed capture (0 when the file was loaded whole).
+    quint64 streamStartByte() const { return stream_start_byte_; }
     // What opening a file does once its bytes are in hand (also the drag-and-drop path).
     void loadFile(const QString& filename, const QByteArray& bytes);
     // "Run Analysis" on the loaded file, with the toolbar's settings.

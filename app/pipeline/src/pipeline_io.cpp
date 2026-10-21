@@ -163,8 +163,8 @@ std::vector<uint8_t> serialize_options(const PipelineOptions& o) {
     w.opt(o.samples_per_symbol_exact, [&](double v) { w.pod(v); });
     w.sz(o.window_start_samples);
     w.sz(o.window_samples);
-    w.sz(o.source_total_bytes);
-    w.sz(o.source_start_byte);
+    w.pod<uint64_t>(o.source_total_bytes);  // byte offsets, not element counts: no length bound
+    w.pod<uint64_t>(o.source_start_byte);
     w.pod(o.demod.bits_per_symbol);
     w.pod(o.demod.samples_per_symbol);
     w.pod(o.demod.bandwidth);
@@ -199,8 +199,8 @@ PipelineOptions deserialize_options(const uint8_t* data, size_t size) {
     o.samples_per_symbol_exact = r.opt<double>([&] { return r.pod<double>(); });
     o.window_start_samples = r.sz();
     o.window_samples = r.sz();
-    o.source_total_bytes = r.sz();
-    o.source_start_byte = r.sz();
+    o.source_total_bytes = r.pod<uint64_t>();
+    o.source_start_byte = r.pod<uint64_t>();
     o.demod.bits_per_symbol = r.pod<unsigned int>();
     o.demod.samples_per_symbol = r.pod<unsigned int>();
     o.demod.bandwidth = r.pod<float>();
@@ -351,7 +351,8 @@ std::vector<uint8_t> serialize_result(const PipelineResult& p) {
     w.b(p.param_search_used);
     w.pod(p.param_search_bit_offset);
     w.pod(p.param_search_confidence);
-    w.b(p.auto_search_skipped);
+    w.pod<uint64_t>(p.auto_window_total_samples);  // plain values, not lengths: no element-count bound applies
+    w.pod<uint64_t>(p.auto_window_total_bits);
     w.b(p.modulation_from_search);
     w.str(p.classifier_top_label);
     w.b(p.pulse_shape_searched);
@@ -474,7 +475,8 @@ PipelineResult deserialize_result(const uint8_t* data, size_t size) {
     p.param_search_used = r.b();
     p.param_search_bit_offset = r.pod<unsigned int>();
     p.param_search_confidence = r.pod<double>();
-    p.auto_search_skipped = r.b();
+    p.auto_window_total_samples = static_cast<size_t>(r.pod<uint64_t>());
+    p.auto_window_total_bits = static_cast<size_t>(r.pod<uint64_t>());
     p.modulation_from_search = r.b();
     p.classifier_top_label = r.str();
     p.pulse_shape_searched = r.b();

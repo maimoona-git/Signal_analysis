@@ -476,3 +476,20 @@ classifier's label does not verify, this reading is tried first, ahead of its ru
 change how many captures decode (66% either way: the retries already reach the right modulation), and the
 "Predicted modulation" line is still the label that was used. QAM16 against QAM64 is the weak point at low SNR
 and few symbols (about 140 symbols in these captures).
+
+### Large captures: auto-detect on the first part, and files past 2 GiB
+
+Auto-detect and its retries used to be skipped above 300,000 demodulated bits or 2M samples. They now run on
+the first 2,000,000 samples, and of the bits those give, the first 60,000 (a search over 300,000 bits took
+14 s; 60,000 is a fraction of a second), and the panel says "Auto-detect window: searched the first N of M
+...; this result covers only that part" (JSON: `auto_window_total_samples`, `auto_window_total_bits`). A
+convolutional code is a valid code word up to any cut, so a long Viterbi stream is found from its first part
+(tested on 2.5M coded bits, and a 16M-sample window: found and verified in 6.5 s including loading). Block
+codes are only found when the cut happens to land on a block boundary (up to 7 padding bits are ignored), and
+soft decoding is off in a windowed run. The framing (AX.25) scan still sees the whole stream.
+
+A 2.25 GiB file was stepped through in real Chrome, all 18 windows of 128 MiB, and the last one (past 2^31
+bytes) analysed correctly (`SIG_BIG_FILE=1 node --test tests/gui/browser-gui.test.mjs`; it writes 2.25 GiB
+of disk, so it only runs when asked). That test found a real bug: the wire format rejected a byte offset
+above 2^31 as an "implausible length". Byte offsets are now plain 64-bit values. The limit that remains is
+the 32-bit WASM `size_t` for sample counts (about 4 billion samples, 32 GiB of cf32).

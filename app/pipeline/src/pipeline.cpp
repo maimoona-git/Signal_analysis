@@ -63,7 +63,7 @@ struct Analysis {
     bool param_search_used = false;
     unsigned int param_search_bit_offset = 0;
     double param_search_confidence = 0.0;
-    bool auto_search_skipped = false;
+    size_t auto_window_total_bits = 0;
     std::vector<Ax25Frame> frames;
     std::string framing_chain;
 };
@@ -90,6 +90,9 @@ constexpr double kMinAlignmentMargin = 0.03;
 // of the whole stream: on a multi-million-bit stream one run took 46 s natively. Above these
 // sizes they are skipped (and the result says so); a window or explicit settings still work.
 constexpr size_t kMaxAutoSearchBits = 300'000;
+// Above that, the search runs on this many bits: the searches scale worse than linearly (candidate
+// interleaver shapes grow with the length) -- 300k bits took 14 s, 60k a fraction of a second.
+constexpr size_t kAutoSearchWindowBits = 60'000;
 constexpr size_t kMaxAutoSearchSamples = 2'000'000;
 // Framing is a handful of linear passes (8 chains), so it can look at far more than the searches can.
 // Between the largest linear value measured (6.2) and the smallest FSK value (8.5).
@@ -133,10 +136,6 @@ Analysis analyze_samples(const std::vector<std::complex<float>>& samples_for_dem
                          const PipelineOptions& options, bool recovery_used) {
     Analysis a;
     a.demodulated_bits = demodulate(samples_for_demod, scheme, options.demod);
-    // Feature 2 (SIH26147 extra feature): blind, before anything below tries to
-    // de-interleave or decode it (both of which would remove exactly the redundancy
-    // this looks for).
-    a.rank_analysis = build_rank_analysis(a.demodulated_bits);
 
     std::optional<InterleaverSpec> interleaver = options.interleaver;
     std::optional<std::string> fec_scheme = options.fec_scheme;
@@ -153,10 +152,18 @@ Analysis analyze_samples(const std::vector<std::complex<float>>& samples_for_dem
 
     const bool auto_wanted = options.auto_detect && !options.framing_only && !interleaver.has_value() &&
                              !fec_scheme.has_value() && !framing_ok;
-    const bool auto_ok = a.demodulated_bits.size() <= kMaxAutoSearchBits;
-    if (auto_wanted && !auto_ok) a.auto_search_skipped = true;
+    // Too many bits to search: search (and report on) the first kAutoSearchWindowBits. The framing scan
+    // above already saw the whole stream.
+    if (auto_wanted && a.demodulated_bits.size() > kMaxAutoSearchBits) {
+        a.auto_window_total_bits = a.demodulated_bits.size();
+        a.demodulated_bits.resize(kAutoSearchWindowBits);
+    }
+    // Feature 2 (SIH26147 extra feature): blind, before anything below tries to
+    // de-interleave or decode it (both of which would remove exactly the redundancy
+    // this looks for).
+    a.rank_analysis = build_rank_analysis(a.demodulated_bits);
     std::optional<DetectionResult> detection;
-    if (auto_wanted && auto_ok) {
+    if (auto_wanted) {
         detection = detect_params(a.demodulated_bits);
         // With auto-detect now on by default, detect_params' header-repeat score alone can pick
         // an interleaver for data that has none (a single non-repeating message gives it noise to
@@ -181,7 +188,7 @@ Analysis analyze_samples(const std::vector<std::complex<float>>& samples_for_dem
     // here (see soft_demod.hpp). Silently degrades to the hard path otherwise; the
     // caller can tell which one ran from soft_decoding_used.
     const bool try_soft = options.soft_decoding && scheme != "fsk" && fec_scheme.has_value() &&
-                         fec_supports_soft_decode(*fec_scheme);
+                         fec_supports_soft_decode(*fec_scheme) && a.auto_window_total_bits == 0;
 
     if (fec_scheme.has_value() && !fec_msg_len.has_value()) {
         throw std::invalid_argument("fec_msg_len is required when fec_scheme is given");
@@ -278,7 +285,7 @@ Analysis analyze_samples(const std::vector<std::complex<float>>& samples_for_dem
         *a.reencode_agreement >= verify_bar(a.detected_fec ? a.detected_fec : options.fec_scheme) &&
         margin_ok(interleaver, fec_scheme, fec_msg_len, 0);
     std::optional<size_t> used_msg_len = fec_msg_len;
-    if (options.auto_detect && !options.framing_only && auto_ok && !framing_ok && !options.interleaver && !options.fec_scheme && !verified_already) {
+    if (options.auto_detect && !options.framing_only && !framing_ok && !options.interleaver && !options.fec_scheme && !verified_already) {
         try {
             ParamSearchOptions so;
             so.deadline = options.deadline;
@@ -408,8 +415,8 @@ PipelinePrep pipeline_prepare(const uint8_t* data, size_t size, const std::strin
     }
     if (options.source_total_bytes > 0 && !is_wav_name) {
         const size_t bps = fmt == sigcore::IqSampleFormat::Cf32 ? 8 : fmt == sigcore::IqSampleFormat::Ci16 ? 4 : 2;
-        prep.file_total_samples = options.source_total_bytes / bps;
-        prep.window_start_samples = options.source_start_byte / bps + prep.window_start_samples;
+        prep.file_total_samples = static_cast<size_t>(options.source_total_bytes / bps);
+        prep.window_start_samples = static_cast<size_t>(options.source_start_byte / bps) + prep.window_start_samples;
     }
     prep.signal = load_signal(load_data, load_size, filename, rate, fmt);
     if (prep.signal.format.rfind("wav_", 0) != 0) {
@@ -482,6 +489,15 @@ PipelineResult pipeline_finish(PipelinePrep prep, const Classification& classifi
 
 static PipelineResult pipeline_finish_impl(PipelinePrep prep, const Classification& classification,
                                            const PipelineOptions& options) {
+    // Auto-detect and its retries are too expensive on a very large capture: run them on the first
+    // kMaxAutoSearchSamples samples and say so (PipelineResult::auto_window_total_samples).
+    if (options.auto_detect && !options.interleaver && !options.fec_scheme && prep.auto_window_total_samples == 0 &&
+        prep.signal.samples.size() > kMaxAutoSearchSamples) {
+        prep.auto_window_total_samples = prep.signal.samples.size();
+        prep.signal.samples.resize(kMaxAutoSearchSamples);
+        prep.signal.num_samples = kMaxAutoSearchSamples;
+    }
+
     // Constellation check on raw samples that are already one per symbol. Only when the spectrum is
     // flat, as symbol-rate linear data is: oversampled FSK (peakiness 8.5 and up, against 6.2 at most
     // for BPSK to QAM64) would otherwise be read as some PSK. The classifier's label is not used for
@@ -807,13 +823,14 @@ static PipelineResult pipeline_finish_impl(PipelinePrep prep, const Classificati
     result.param_search_used = best.param_search_used;
     result.param_search_bit_offset = best.param_search_bit_offset;
     result.param_search_confidence = best.param_search_confidence;
-    result.auto_search_skipped = best.auto_search_skipped;
+    result.auto_window_total_bits = best.auto_window_total_bits;
+    result.auto_window_total_samples = prep.auto_window_total_samples;
     result.frames = std::move(best.frames);
     result.framing_chain = std::move(best.framing_chain);
 
     result.file_path = prep.signal.path;
     result.sample_rate = prep.signal.sample_rate;
-    result.num_samples = prep.signal.num_samples;
+    result.num_samples = prep.auto_window_total_samples ? prep.auto_window_total_samples : prep.signal.num_samples;
     result.file_format = prep.signal.format;
     result.samples = std::move(prep.signal.samples);
     {

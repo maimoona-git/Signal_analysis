@@ -1168,19 +1168,43 @@ TEST_CASE("an FSK capture with a trailing partial symbol still demodulates") {
     CHECK(bits_to_text(r.demodulated_bits).substr(0, 8) == "SIH2026!");
 }
 
-// A huge capture must not run the hundreds-of-candidates searches (46 s natively on 16M zero
-// samples before this limit); the result says it skipped them.
-TEST_CASE("auto-detect is skipped, and reported, on a capture too large to search") {
+// A huge capture must not run the hundreds-of-candidates searches over everything (46 s natively on
+// 16M zero samples before there was a limit): they run on the first part, and the result says so.
+TEST_CASE("a capture too large to search whole is searched on its first part, and the result says so") {
     std::vector<uint8_t> raw(8 * 400'000, 0);  // 400k bpsk bits at 1 sample/symbol: over the 300k-bit limit
     for (size_t i = 0; i < 400'000; ++i) { const float v = (i * 2654435761u >> 7) & 1 ? 1.0f : -1.0f; std::memcpy(&raw[8 * i], &v, 4); }
     PipelineOptions o;
     o.sample_rate = 8000.0;
     o.auto_detect = true;
     const auto r = run_pipeline(raw.data(), raw.size(), "huge.iq", o, {"bpsk", 0.9});
-    CHECK(r.auto_search_skipped);
-    CHECK(!r.detection_score.has_value());
-    CHECK(!r.param_search_used);
-    CHECK(format_result_text(r, 100, false, true).find("Auto-detect:          skipped") != std::string::npos);
+    CHECK(r.auto_window_total_samples == 0);          // under the sample limit
+    CHECK(r.auto_window_total_bits == 400'000);
+    CHECK(r.demodulated_bits.size() == 60'000);
+    CHECK(format_result_text(r, 100, false, true).find("Auto-detect window:   searched the first 60000 of 400000 demodulated bits") != std::string::npos);
+}
+
+// The point of searching a prefix: a long stream of one code is a valid code word up to any cut, so
+// the first part is enough to find the code. 2.5M coded bits at 1 sample/symbol exceed both limits.
+TEST_CASE("a long convolutionally coded capture is found from its first part") {
+    Rng rng(808);
+    Bits payload;
+    for (unsigned i = 0; i < 1'250'000; ++i) payload.push_back(static_cast<uint8_t>((rng.next() >> 33) & 1));
+    const Bits coded = fec_encode(payload, "viterbi");
+    const auto bytes = iq_bytes(sigapp::modulate(coded, "bpsk"));
+    PipelineOptions o;
+    o.sample_rate = 8000.0;
+    o.auto_detect = true;
+    const auto r = run_pipeline(bytes.data(), bytes.size(), "long.iq", o, {"bpsk", 1.0});
+    CHECK(r.auto_window_total_samples == coded.size());
+    CHECK(r.num_samples == coded.size());          // the capture's size, not the searched part's
+    CHECK(r.samples.size() == 2'000'000);
+    CHECK(r.auto_window_total_bits == 2'000'000);
+    CHECK(r.demodulated_bits.size() == 60'000);
+    CHECK(r.decode_status == DecodeStatus::Verified);
+    CHECK(r.detected_fec == std::optional<std::string>("viterbi"));
+    CHECK(r.decoded_bits.has_value());
+    if (r.decoded_bits && r.decoded_bits->size() >= 1000)
+        CHECK(Bits(r.decoded_bits->begin(), r.decoded_bits->begin() + 1000) == Bits(payload.begin(), payload.begin() + 1000));
 }
 
 // Link-layer framing as a verifier: a G3RUH-scrambled, NRZI-coded AX.25 beacon (the CPSat / cubesat

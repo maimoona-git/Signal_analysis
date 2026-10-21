@@ -87,8 +87,9 @@ struct PipelineOptions {
     // bytes it hands in (the browser reads a Blob slice), these say where that slice sits in
     // the real file, so the result still reports "samples a..b of N" for the whole file.
     // 0 = the bytes given are the whole file.
-    size_t source_total_bytes = 0;
-    size_t source_start_byte = 0;
+    // 64-bit on purpose: a byte offset into a multi-GiB file does not fit the 32-bit size_t of the WASM build.
+    uint64_t source_total_bytes = 0;
+    uint64_t source_start_byte = 0;
     DemodParams demod;                        // FSK parameters
     // Gap-list Phase 2.10: for an FSK capture, estimate tone count, symbol length and
     // bandwidth blind (sigcore::estimate_fsk_params) and use them instead of `demod`,
@@ -257,6 +258,9 @@ struct PipelinePrep {
     SampleRateSource sample_rate_source = SampleRateSource::AssumedDefault;
     size_t file_total_samples = 0;
 
+    // Set by pipeline_finish when it cut `signal` down to the auto-detect window: the original size.
+    size_t auto_window_total_samples = 0;
+
     // sigcore::constellation_check of the raw samples when they are already one per symbol and the
     // signal does not look like FSK; computed once by pipeline_finish_impl.
     bool constellation_checked = false;
@@ -380,9 +384,12 @@ struct PipelineResult {
     bool param_search_used = false;
     unsigned int param_search_bit_offset = 0;
     double param_search_confidence = 0.0;  // the winning candidate's search confidence, 0..1
-    // Auto-detect, Parameter Search and the retries are skipped on very large captures (they cost
-    // far more than the analysis itself); set when that happened to a run that asked for them.
-    bool auto_search_skipped = false;
+    // Auto-detect, Parameter Search and the retries cost far more than the analysis itself, so on a
+    // very large capture they run on its first part and the result covers only that part: the
+    // first 2,000,000 samples and, of the bits they demodulate to, the first 300,000. These hold the
+    // full size when that happened (0 = the whole capture was used). Step through the rest as windows.
+    size_t auto_window_total_samples = 0;
+    size_t auto_window_total_bits = 0;
 
     // Link-layer framing (framing.hpp): CRC-valid AX.25 frames found in the demodulated stream
     // (auto-detect on). Finding one verifies the whole chain, so decode_status is Verified and

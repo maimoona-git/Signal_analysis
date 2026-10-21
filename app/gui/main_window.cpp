@@ -493,8 +493,8 @@ void MainWindow::runAnalysis() {
     request.options.auto_detect = auto_detect_->isChecked();
     request.options.sigmf_meta_json = sigmf_meta_json_;
     if (stream_total_bytes_ > 0) {
-        request.options.source_total_bytes = static_cast<size_t>(stream_total_bytes_);
-        request.options.source_start_byte = static_cast<size_t>(stream_start_byte_);
+        request.options.source_total_bytes = stream_total_bytes_;
+        request.options.source_start_byte = stream_start_byte_;
     }
     request.options.time_budget_sec = 5.0;  // single-threaded build: bound how long a hard capture can hold the page
     request.options.window_samples = 16u * 1024u * 1024u;  // Gap-list Phase 4: bound analysis memory (128 MB of cf32)

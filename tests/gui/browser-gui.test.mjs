@@ -358,6 +358,53 @@ describe('the Qt-WASM app in real Chrome', () => {
     }
   });
 
+  // 2.25 GiB: past 2^31 bytes, where a 32-bit offset or size anywhere between the file chooser and
+  // the WASM module would wrap. Writes 2.25 GiB of disk and steps through 18 windows, so it only runs
+  // when asked: SIG_BIG_FILE=1 node --test tests/gui/browser-gui.test.mjs
+  it('a 2.25 GiB capture is read window by window, including the last, past 2^31 bytes', { skip: !process.env.SIG_BIG_FILE, timeout: 900000 }, async () => {
+    const os = await import('node:os');
+    const big = path.join(os.tmpdir(), `sig-big-${process.pid}.iq`);
+    const window = 128 * 1024 * 1024, windows = 18, total = window * windows;
+    const fd = fs.openSync(big, 'w');
+    try {
+      const chunk = Buffer.alloc(1024 * 1024);
+      for (let i = 0; i < chunk.length; i += 8) chunk.writeFloatLE(1.0, i);
+      for (let off = 0; off < total; off += chunk.length) fs.writeSync(fd, chunk, 0, chunk.length, off);
+      const tone = Buffer.alloc(1024 * 1024);
+      for (let i = 0; i < tone.length / 8; i++) {
+        tone.writeFloatLE(Math.cos(2 * Math.PI * i / 8), 8 * i);
+        tone.writeFloatLE(Math.sin(2 * Math.PI * i / 8), 8 * i + 4);
+      }
+      for (let off = total - window; off < total; off += tone.length) fs.writeSync(fd, tone, 0, tone.length, off);  // last window only
+      let s = await state();
+      await click(s.controls.sampleRate);
+      await page.keyboard.press('End');
+      for (let i = 0; i < 12; i++) await page.keyboard.press('Backspace');
+      await page.keyboard.type('8000');
+      s = await state();
+      const [chooser] = await Promise.all([page.waitForFileChooser({ timeout: 10000 }), click(s.controls.open)]);
+      await chooser.accept([big]);
+      s = await waitFor('the big file', (x) => x.filename.startsWith('sig-big-'), 300000);
+      assert.equal(s.nextWindowEnabled, true);
+      for (let w = 1; w < windows; w++) {
+        await click(s.controls.nextWindow);
+        s = await waitFor(`window ${w + 1} to load`, (x) => x.streamStartByte === w * window && x.status.startsWith('Loaded'), 120000);
+        if (w < windows - 1) assert.equal(s.nextWindowEnabled, true, `window ${w + 1} is not the last`);
+      }
+      assert.equal(s.nextWindowEnabled, false, 'the last window has no next');
+      await click(s.controls.run);
+      s = await waitFor('the last window', (x) => x.status.startsWith('Done.') || x.status === 'Analysis failed.', 180000);
+      assert.ok(s.status.startsWith('Done.'), `${s.status}: ${s.resultText}`);
+      const per = window / 8;
+      assert.match(s.resultText, new RegExp(`Analysed window:      samples ${per * (windows - 1)} to ${per * windows} of ${total / 8}`));
+      const hz = Number(/Strongest signal:\s+(-?\d+(?:\.\d+)?) Hz/.exec(s.resultText)?.[1]);
+      assert.ok(Math.abs(hz - 1000) < 100, `the last window should show the 1000 Hz tone, strongest signal at ${hz} Hz`);
+    } finally {
+      fs.closeSync(fd);
+      fs.rmSync(big, { force: true });
+    }
+  });
+
   it('a file the pipeline rejects is reported in the panel, the status bar and a dialog', async () => {
     await page.evaluate(() => window.sigApp.sigAppOpenFile(new Uint8Array(64), 'mystery.bin'));
     let s = await waitFor('the file to load', (x) => x.filename === 'mystery.bin');

@@ -101,8 +101,14 @@ std::string format_result_text(const PipelineResult& r, size_t max_message_chars
                  (f.has_pid ? ", PID 0x" + hex_byte(f.pid) : std::string()) + ", " + std::to_string(f.info.size()) +
                  " info bytes");
         }
-        if (r.auto_search_skipped) {
-            line("Auto-detect:          skipped (capture too large to search; analyse a smaller window)");
+        if (r.auto_window_total_samples > 0 || r.auto_window_total_bits > 0) {
+            std::string what;
+            if (r.auto_window_total_samples > 0)
+                what = "the first " + std::to_string(r.samples.size()) + " of " + std::to_string(r.auto_window_total_samples) + " samples";
+            if (r.auto_window_total_bits > 0)
+                what += std::string(what.empty() ? "" : " and ") + "the first " + std::to_string(r.demodulated_bits.size()) + " of " +
+                        std::to_string(r.auto_window_total_bits) + " demodulated bits";
+            line("Auto-detect window:   searched " + what + " (capture too large to search whole); this result covers only that part");
         }
         if (r.param_search_used) {
             line("Parameter search:     found automatically at bit offset " + std::to_string(r.param_search_bit_offset) +
@@ -344,7 +350,8 @@ std::string format_result_json(const PipelineResult& r) {
     field("demodulated_bits", std::to_string(r.demodulated_bits.size()));
     if (r.detected_interleaver) field("interleaver", jstr(r.detected_interleaver->kind));
     if (r.detected_fec) field("fec", jstr(*r.detected_fec));
-    field("auto_search_skipped", r.auto_search_skipped ? "true" : "false");
+    field("auto_window_total_samples", std::to_string(r.auto_window_total_samples));
+    field("auto_window_total_bits", std::to_string(r.auto_window_total_bits));
     if (!r.frames.empty()) {
         field("framing_chain", jstr(r.framing_chain));
         std::string arr = "[";
