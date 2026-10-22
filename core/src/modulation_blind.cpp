@@ -170,6 +170,7 @@ double spectral_peakiness(const std::vector<std::complex<float>>& samples) {
 }
 
 ConstellationCheck constellation_check(const std::vector<std::complex<float>>& symbols) {
+    constexpr double kMinQamAdvantage = 0.03;
     ConstellationCheck out;
     if (symbols.size() < 100) return out;
     using cd = std::complex<double>;
@@ -217,8 +218,20 @@ ConstellationCheck constellation_check(const std::vector<std::complex<float>>& s
 
     std::vector<std::pair<double, std::string>> order = {{ll_psk, fit[0].second}, {ll16, "qam16"}, {ll64, "qam64"}};
     std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    out.qam_advantage = (std::max(ll16, ll64) - ll_psk) / static_cast<double>(mag.size());
+    out.margin = (order[0].first - order[1].first) / static_cast<double>(mag.size());  // before the gate below
+    // The QAM rings are a flexible density: on a noisy or jittery PSK they can edge out the single ring
+    // by a hair (a real recovered BPSK beacon: 0.009 per symbol). Real QAM beats it clearly (measured
+    // 0.04 and up for QAM16 from 15 dB and QAM64 from 25 dB; ordinary noisy PSK never exceeds 0.02).
+    // So a QAM reading needs a clear win; otherwise the phase-only fit decides.
+    if (out.qam_advantage < kMinQamAdvantage) {
+        std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) {
+            const bool a_psk = a.second != "qam16" && a.second != "qam64";
+            const bool b_psk = b.second != "qam16" && b.second != "qam64";
+            return a_psk > b_psk;
+        });
+    }
     out.best = order[0].second;
-    out.margin = (order[0].first - order[1].first) / static_cast<double>(mag.size());
     for (const auto& o : order) out.ranking.push_back(o.second);
     for (const auto& f : fit)
         if (std::find(out.ranking.begin(), out.ranking.end(), f.second) == out.ranking.end()) out.ranking.push_back(f.second);

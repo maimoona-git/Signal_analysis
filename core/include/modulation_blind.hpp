@@ -46,7 +46,8 @@ BlindLinearCheck blind_linear_check(const std::vector<std::complex<float>>& samp
 // estimates carry a standard error of roughly 0.1 at a few hundred symbols, the two differ by 0.06.
 struct ConstellationCheck {
     std::string best;       // "bpsk", "qpsk", "psk8", "qam16" or "qam64"; empty when not run
-    double margin = 0.0;    // runner-up fit error minus best fit error, relative to the best
+    double margin = 0.0;    // log-likelihood winner minus runner-up, per symbol (before the QAM gate)
+    double qam_advantage = 0.0;  // best QAM ring structure's log-likelihood minus a single ring's, per symbol
     double c40 = 0.0;       // |C40| / C21^2 as measured
     double c42 = 0.0;       // C42 / C21^2 as measured
     std::vector<std::string> ranking;  // all five, best first

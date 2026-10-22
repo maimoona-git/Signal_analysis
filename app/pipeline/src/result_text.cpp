@@ -128,7 +128,10 @@ std::string format_result_text(const PipelineResult& r, size_t max_message_chars
     line("Num samples:          " + std::to_string(r.num_samples));
     line("Spectrogram shape:    (" + std::to_string(r.spectrogram.frames) + ", " + std::to_string(r.spectrogram.nfft) + ")");
     line("");
-    line("Predicted modulation: " + r.predicted_modulation + " (confidence " + printf_string("%.2f", r.predicted_confidence) + ")");
+    // A confidence is the classifier's; when the constellation check supplied the label there is none to show.
+    line("Predicted modulation: " + r.predicted_modulation +
+         (r.modulation_from_constellation ? std::string(" (read from the constellation)")
+                                          : " (confidence " + printf_string("%.2f", r.predicted_confidence) + ")"));
     if (show_decode_status && r.modulation_from_blind_check) {
         line("Modulation check:     classifier said " + r.classifier_top_label + ", but the signal is not FSK (envelope varies " +
              printf_string("%.2f", r.blind_envelope_cv) + ", squared-signal line " + printf_string("%.2f", r.blind_line) +
@@ -239,8 +242,9 @@ std::string format_result_text(const PipelineResult& r, size_t max_message_chars
 }
 
 std::string format_done_status(const PipelineResult& r, bool show_decode_status) {
-    std::string status = "Done. Predicted modulation: " + r.predicted_modulation + " (" +
-                         printf_string("%.0f", r.predicted_confidence * 100.0) + "% confidence).";
+    std::string status = "Done. Predicted modulation: " + r.predicted_modulation +
+                         (r.modulation_from_constellation ? std::string(" (read from the constellation).")
+                                                          : " (" + printf_string("%.0f", r.predicted_confidence * 100.0) + "% confidence).");
     if (show_decode_status) {
         switch (r.decode_status) {
             case DecodeStatus::Verified: status += " Decoded message verified."; break;

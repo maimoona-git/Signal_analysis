@@ -1072,6 +1072,9 @@ TEST_CASE("the constellation reading rescues a capture the classifier mislabels,
     CHECK(r.predicted_modulation == "qpsk");
     CHECK(r.modulation_from_constellation);
     CHECK(r.classifier_top_label == "psk8");
+    // no classifier confidence is shown for a label the constellation check supplied
+    CHECK(format_done_status(r, true).find("(read from the constellation)") != std::string::npos);
+    CHECK(format_result_text(r, 100, false, true).find("Predicted modulation: qpsk (read from the constellation)") != std::string::npos);
 }
 
 TEST_CASE("the constellation line stays silent on genuine FSK, whatever the classifier says") {
@@ -1329,6 +1332,7 @@ TEST_CASE("the beacon fixture is decoded by the GUI's own two-step flow from a w
     CHECK(r2.decode_status == DecodeStatus::Verified);
     CHECK(r2.modulation_from_blind_check);
     CHECK(r2.frames.size() == 1);
+    CHECK(r2.constellation_label == "bpsk");  // it is BPSK; the first version read this capture as QAM64
     if (r2.frames.size() == 1) CHECK(std::string(r2.frames[0].info.begin(), r2.frames[0].info.end()) == "SYNTHETIC BEACON: ALL SYSTEMS NOMINAL 0042");
 }
 

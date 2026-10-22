@@ -204,6 +204,26 @@ TEST_CASE("spectral peakiness separates symbol-rate linear data from oversampled
     CHECK(spectral_peakiness({}) == 0.0);
 }
 
+TEST_CASE("noisy or lopsided PSK is never promoted to QAM (a real recovered BPSK beacon once read as QAM64)") {
+    std::mt19937 rng(31);
+    std::normal_distribution<float> g;
+    int wrong = 0, runs = 0;
+    for (const char* name : {"bpsk", "qpsk", "psk8"}) {
+        for (double snr : {4.0, 8.0, 14.0}) {
+            for (int trial = 0; trial < 20; ++trial) {
+                auto x = symbol_stream(name, 1400, snr, 0.2, rng);
+                // lopsided noise: all of it on the in-phase axis, none on the quadrature one
+                for (auto& v : x) v = cf(v.real() + 0.3f * g(rng), v.imag());
+                const auto c = constellation_check(x);
+                ++runs;
+                wrong += (c.best == "qam16" || c.best == "qam64");
+            }
+        }
+    }
+    CHECK(wrong == 0);
+    CHECK(runs == 180);
+}
+
 TEST_CASE("constellation check is inconclusive on too little or empty input") {
     CHECK(constellation_check({}).best.empty());
     CHECK(constellation_check(std::vector<cf>(50, cf(1, 0))).best.empty());

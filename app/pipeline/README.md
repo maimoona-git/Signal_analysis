@@ -469,13 +469,19 @@ sample/symbol, or the output of timing recovery. At 1 sample/symbol it only runs
 (`spectral_peakiness` < 7.5): symbol-rate linear data measured 1.3-6.2, oversampled FSK 8.5-14, and without
 that gate 27 of 40 FSK captures were read as QPSK.
 
-On 240 synthetic 1-sample/symbol captures (6 modulations x 5 SNRs x 8) the panel's "Constellation check" line
-is right for 79% of the 200 non-FSK captures (BPSK 100%, QPSK 95%, 8-PSK 85%, QAM16 57%, QAM64 62%; 100% for
-all at 25 dB), against 14% for the classifier's top guess, and silent on all 40 FSK captures. When the
-classifier's label does not verify, this reading is tried first, ahead of its runner-up labels. It does not
-change how many captures decode (66% either way: the retries already reach the right modulation), and the
-"Predicted modulation" line is still the label that was used. QAM16 against QAM64 is the weak point at low SNR
-and few symbols (about 140 symbols in these captures).
+A QAM reading needs a clear win over the single ring (at least 0.03 log-likelihood per symbol): the rings are a
+flexible density, and on a real recovered BPSK beacon (non-circular noise) they edged out the single ring by
+0.009 per symbol and the first version printed "qam64" for it -- caught by running the demo captures in the
+real app. Ordinary noisy PSK never exceeds 0.02, QAM16 is 0.04 and up from 15 dB, QAM64 from 25 dB.
+
+Measured on 200 synthetic non-FSK captures at symbol rate (5 modulations x 5 SNRs x 8, about 140-280 symbols
+each): BPSK 100% and QPSK 100% at every SNR down to 3 dB, 8-PSK 95% (75% at 3 dB), QAM16 100% at 15 dB and
+above and QAM64 100% at 25 dB, 71% overall, against 14% for the classifier's top guess on the same captures.
+Below those SNRs a QAM is read as QPSK: noisy QAM and QPSK really are indistinguishable there, and the gate
+chooses the safe reading over calling PSK "QAM". Silent on all 40 FSK captures. When the classifier's label does
+not verify, the reading is tried first, ahead of its runner-up labels. It does not change how many captures
+decode (66% either way: the retries already reach the right modulation). Where the reading supplied the label,
+the panel says "(read from the constellation)" in place of a classifier confidence.
 
 ### Large captures: auto-detect on the first part, and files past 2 GiB
 
