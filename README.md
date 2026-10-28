@@ -98,8 +98,7 @@ Chrome). [tests/COVERAGE.md](tests/COVERAGE.md) lists what is covered.
   other labels and checks every decode, so a wrong label usually costs nothing, but not always.
 - QAM16 and QAM64 need a clean signal: on our synthetic captures they decode reliably at about 25 dB, and
   telling them apart gets harder at low signal-to-noise ratios and short lengths.
-- The RS and LDPC codes are small custom codes. The RS(255,223) + Viterbi chain follows the CCSDS parameters
-  but not its interleaving, randomiser or sync marker, and has not been tried on a real recording.
+- The RS and LDPC codes are small custom codes. The RS(255,223) + Viterbi chain follows the CCSDS parameters but not its interleaving, randomiser or sync marker, and has not been tried on a real recording.
 - A convolutional interleaver combined with FEC does not recover the message.
 - On very large captures auto-detect searches only the first part (the first 2 million samples and, of
   those, 60,000 bits) and says so; the rest of a big file is reached by stepping through its windows.
